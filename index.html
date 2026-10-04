@@ -3,45 +3,113 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>iTantra App Download</title>
+    <title>iTantra Demo - SIH</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: #121212;
             color: #ffffff;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
             text-align: center;
+            padding: 20px;
         }
         h1 {
             color: #00ff00;
+            font-size: 2.5rem;
+            margin-bottom: 5px;
         }
-        p {
+        .subtitle {
             font-size: 1.2rem;
-            margin-bottom: 30px;
+            color: #aaaaaa;
+            margin-bottom: 40px;
         }
-        .download-btn {
+        .container {
+            display: flex;
+            gap: 40px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 800px;
+        }
+        .card {
+            background-color: #1e1e1e;
+            border: 2px solid #333;
+            border-radius: 12px;
+            padding: 40px 30px;
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transition: transform 0.3s, border-color 0.3s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            border-color: #00ff00;
+        }
+        .card h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #ffffff;
+        }
+        .card p {
+            color: #cccccc;
+            margin-bottom: 10px;
+        }
+        .small-text {
+            font-size: 0.9rem;
+            color: #888888;
+            margin-bottom: 25px;
+        }
+        .action-btn {
             background-color: #00ff00;
             color: #121212;
             text-decoration: none;
-            padding: 15px 30px;
-            font-size: 1.2rem;
+            padding: 12px 25px;
+            font-size: 1.1rem;
             font-weight: bold;
             border-radius: 8px;
+            border: none;
+            cursor: pointer;
             transition: background-color 0.3s;
+            width: 80%;
         }
-        .download-btn:hover {
+        .action-btn:hover {
             background-color: #00cc00;
+        }
+        .btn-outline {
+            background-color: transparent;
+            color: #00ff00;
+            border: 2px solid #00ff00;
+        }
+        .btn-outline:hover {
+            background-color: rgba(0, 255, 0, 0.1);
         }
     </style>
 </head>
 <body>
-    <h1>Welcome to iTantra</h1>
-    <p>Get the latest Android version of the iTantra app.</p>
-    <a href="iTantra-v4.apk" download class="download-btn">Download APK</a>
+    <h1>iTantra Demo</h1>
+    <p class="subtitle">SIH Presentation Portal</p>
+    
+    <div class="container">
+        <!-- Web Demo Card -->
+        <div class="card">
+            <h2>🌐 WEB DEMO</h2>
+            <p>Open in Laptop</p>
+            <p class="small-text">View the dashboard directly in your browser</p>
+            <button class="action-btn btn-outline" onclick="alert('Web Demo is coming soon!')">Launch Demo</button>
+        </div>
+
+        <!-- Android App Card -->
+        <div class="card">
+            <h2>📱 ANDROID APP</h2>
+            <p>Download APK</p>
+            <p class="small-text">Install and test on an Android phone</p>
+            <a href="iTantra-v4.apk" download class="action-btn" style="box-sizing: border-box;">Download APK</a>
+        </div>
+    </div>
 </body>
 </html>
