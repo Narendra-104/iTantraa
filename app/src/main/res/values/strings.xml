@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">iTantra</string>
+    <string name="app_tagline">Offline Voice-to-Text Mesh Radio</string>
+    <string name="offline_banner">OFFLINE - NO INTERNET PERMISSION</string>
+</resources>

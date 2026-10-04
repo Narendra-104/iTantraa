@@ -1,0 +1,122 @@
+[
+  {
+    "id": "fac_01",
+    "name": "AIIMS Emergency Trauma Centre",
+    "type": "HOSPITAL",
+    "category": "MEDICAL",
+    "latitude": 28.5672,
+    "longitude": 77.2100,
+    "phone": "+91-11-26588500",
+    "address": "Ansari Nagar, New Delhi",
+    "bedsAvailable": 45,
+    "hasIcu": true
+  },
+  {
+    "id": "fac_02",
+    "name": "Safdarjung Hospital Emergency Care",
+    "type": "HOSPITAL",
+    "category": "MEDICAL",
+    "latitude": 28.5701,
+    "longitude": 77.2078,
+    "phone": "+91-11-26165060",
+    "address": "Ring Road, Opp AIIMS, New Delhi",
+    "bedsAvailable": 60,
+    "hasIcu": true
+  },
+  {
+    "id": "fac_03",
+    "name": "Connaught Place Fire Station",
+    "type": "FIRE_STATION",
+    "category": "FIRE",
+    "latitude": 28.6315,
+    "longitude": 77.2167,
+    "phone": "101",
+    "address": "Barakhamba Road, Connaught Place",
+    "vehicles": 8,
+    "hasWaterTanker": true
+  },
+  {
+    "id": "fac_04",
+    "name": "Bhikaji Cama Place Fire Station",
+    "type": "FIRE_STATION",
+    "category": "FIRE",
+    "latitude": 28.5684,
+    "longitude": 77.1856,
+    "phone": "101",
+    "address": "Bhikaji Cama Place, RK Puram",
+    "vehicles": 6,
+    "hasWaterTanker": true
+  },
+  {
+    "id": "fac_05",
+    "name": "Parliament Street Police Station",
+    "type": "POLICE",
+    "category": "SECURITY",
+    "latitude": 28.6256,
+    "longitude": 77.2128,
+    "phone": "112",
+    "address": "Sansad Marg, New Delhi",
+    "patrolUnits": 12,
+    "armedResponse": true
+  },
+  {
+    "id": "fac_06",
+    "name": "Hauz Khas Police Station",
+    "type": "POLICE",
+    "category": "SECURITY",
+    "latitude": 28.5494,
+    "longitude": 77.2001,
+    "phone": "112",
+    "address": "Hauz Khas Market Road, New Delhi",
+    "patrolUnits": 8,
+    "armedResponse": true
+  },
+  {
+    "id": "fac_07",
+    "name": "NDRF 8th Battalion Disaster Response Base",
+    "type": "NDRF",
+    "category": "DISASTER",
+    "latitude": 28.6502,
+    "longitude": 77.3621,
+    "phone": "+91-120-2766013",
+    "address": "Kamla Nehru Nagar, Ghaziabad NDRF Base",
+    "floodBoats": 24,
+    "searchRescueTeams": 10
+  },
+  {
+    "id": "fac_08",
+    "name": "SDRF Flood & Cyclone Quick Response Unit",
+    "type": "NDRF",
+    "category": "FLOOD",
+    "latitude": 28.5912,
+    "longitude": 77.2489,
+    "phone": "+91-11-23860012",
+    "address": "Yamuna Flood Relief Post, Sarai Kale Khan",
+    "floodBoats": 16,
+    "searchRescueTeams": 6
+  },
+  {
+    "id": "fac_09",
+    "name": "Max Super Speciality Emergency",
+    "type": "HOSPITAL",
+    "category": "MEDICAL",
+    "latitude": 28.5282,
+    "longitude": 77.2114,
+    "phone": "+91-11-26515050",
+    "address": "Press Enclave Road, Saket",
+    "bedsAvailable": 30,
+    "hasIcu": true
+  },
+  {
+    "id": "fac_10",
+    "name": "Chanakyapuri Police Station",
+    "type": "POLICE",
+    "category": "SECURITY",
+    "latitude": 28.5960,
+    "longitude": 77.1902,
+    "phone": "112",
+    "address": "Nyaya Marg, Chanakyapuri",
+    "patrolUnits": 10,
+    "armedResponse": true
+  }
+]

@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.ITantra" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#121316</item>
+        <item name="android:navigationBarColor">#121316</item>
+    </style>
+</resources>

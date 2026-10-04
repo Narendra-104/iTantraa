@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package org.coresense.itantra.protocol;
+
+option java_package = "org.coresense.itantra.protocol";
+option java_multiple_files = true;
+
+enum Language {
+  HINDI = 0;
+  ENGLISH = 1;
+  BENGALI = 2;
+  TAMIL = 3;
+  TELUGU = 4;
+  MARATHI = 5;
+  GUJARATI = 6;
+  KANNADA = 7;
+  MALAYALAM = 8;
+  PUNJABI = 9;
+  ODIA = 10;
+}
+
+enum PacketPriority {
+  NORMAL = 0;
+  URGENT = 1;
+  SOS = 2;
+}
+
+enum PacketType {
+  DATA = 0;
+  ACK = 1;
+  NACK = 2;
+  PING = 3;
+  PONG = 4;
+}
+
+message Packet {
+  uint64 msg_id = 1;
+  string sender_id = 2;
+  uint32 seq = 3;
+  Language lang = 4;
+  PacketPriority priority = 5;
+  string text = 6;
+  uint64 timestamp = 7;
+  sint32 lat = 8; // microdegrees: degrees * 1,000,000
+  sint32 lon = 9; // microdegrees: degrees * 1,000,000
+  PacketType type = 10;
+  uint32 crc32 = 11;
+}
