@@ -118,9 +118,23 @@ class OfflineSttEngine(
         }
 
         return@withContext try {
+            var sum = 0.0
+            for (s in pcm16) {
+                sum += (s.toDouble() / 32768.0)
+            }
+            val mean = sum / pcm16.size
+
+            var sumSqDiff = 0.0
+            for (s in pcm16) {
+                val diff = (s.toDouble() / 32768.0) - mean
+                sumSqDiff += diff * diff
+            }
+            val std = kotlin.math.sqrt(sumSqDiff / pcm16.size).toFloat() + 1e-7f
+
             val floatBuf = FloatBuffer.allocate(pcm16.size)
             for (s in pcm16) {
-                floatBuf.put(s.toFloat() / 32768.0f)
+                val normalized = ((s.toFloat() / 32768.0f) - mean.toFloat()) / std
+                floatBuf.put(normalized)
             }
             floatBuf.rewind()
 
@@ -182,7 +196,11 @@ class OfflineSttEngine(
                                 if (maxIdx != 0 && maxIdx != lastTokenIdx) {
                                     if (maxIdx < tokensList.size) {
                                         val token = tokensList[maxIdx]
-                                        sb.append(token.replace(" ", " "))
+                                        if (token == "|") {
+                                            sb.append(" ")
+                                        } else {
+                                            sb.append(token.replace(" ", " "))
+                                        }
                                     }
                                 }
                                 lastTokenIdx = maxIdx
@@ -196,10 +214,15 @@ class OfflineSttEngine(
                     for (tokenIdx in value) {
                         val idx = tokenIdx.toInt()
                         if (idx in tokensList.indices) {
-                            sb.append(tokensList[idx].replace(" ", " "))
+                            val token = tokensList[idx]
+                            if (token == "|") {
+                                sb.append(" ")
+                            } else {
+                                sb.append(token.replace(" ", " "))
+                            }
                         }
                     }
-                    sb.toString().trim()
+                    sb.toString().replace("  ", " ").trim()
                 }
                 else -> ""
             }

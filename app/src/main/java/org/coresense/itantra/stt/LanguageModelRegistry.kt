@@ -46,6 +46,7 @@ open class LanguageModelRegistry(
 
     fun refresh() {
         val rootDir = getModelsStorageDirectory()
+        extractBundledAssetsIfPresent(rootDir)
         val map = mutableMapOf<Language, ModelMetadata>()
 
         for (lang in Language.entries) {
@@ -62,7 +63,7 @@ open class LanguageModelRegistry(
 
             val defaultSizeMb = when (lang) {
                 Language.HINDI -> 78.5f
-                Language.ENGLISH -> 64.0f
+                Language.ENGLISH -> 116.3f
                 Language.BENGALI -> 82.0f
                 Language.TAMIL -> 85.0f
                 Language.TELUGU -> 84.0f
@@ -75,7 +76,7 @@ open class LanguageModelRegistry(
             }
 
             val engine = if (isNeuralInstalled) {
-                if (lang == Language.ENGLISH) "sherpa-onnx (Zipformer)" else "AI4Bharat IndicConformer ONNX"
+                if (lang == Language.ENGLISH) "Wav2Vec2-Base-960h CTC ONNX" else "AI4Bharat IndicConformer ONNX"
             } else {
                 "Offline Model Unavailable (${lang.displayName})"
             }
@@ -126,4 +127,35 @@ open class LanguageModelRegistry(
         val file = File(dir, "tokens.txt")
         return if (file.exists() && file.length() > 0) file else null
     }
+
+    private fun extractBundledAssetsIfPresent(rootDir: File) {
+        if (customBaseDir != null) return // Never extract into test mock directories
+        try {
+            val assetList = context.assets.list("models/stt/en") ?: return
+            if (assetList.contains("model.onnx")) {
+                val enDir = File(rootDir, Language.ENGLISH.code)
+                if (!enDir.exists()) enDir.mkdirs()
+                val targetModel = File(enDir, "model.onnx")
+                val targetTokens = File(enDir, "tokens.txt")
+
+                if (!targetModel.exists() || targetModel.length() == 0L) {
+                    context.assets.open("models/stt/en/model.onnx").use { input ->
+                        targetModel.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+                if (assetList.contains("tokens.txt") && (!targetTokens.exists() || targetTokens.length() == 0L)) {
+                    context.assets.open("models/stt/en/tokens.txt").use { input ->
+                        targetTokens.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Graceful fallback for mock context or missing assets
+        }
+    }
 }
+
