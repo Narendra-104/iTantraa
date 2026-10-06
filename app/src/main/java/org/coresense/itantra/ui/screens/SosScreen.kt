@@ -67,7 +67,7 @@ fun SosScreen(viewModel: MainViewModel) {
                     if (buttonEnabled) {
                         detectTapGestures(
                             onPress = {
-                                viewModel.startSosHold()
+                                viewModel.startSosHold(selectedEmergency)
                                 tryAwaitRelease()
                                 viewModel.cancelSosHold()
                             }

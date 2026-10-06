@@ -109,7 +109,7 @@ class ReliabilityEngine(
             state = DeliveryState.Queued
         )
 
-        if (packet.priority == PacketPriority.SOS || packet.priority == PacketPriority.URGENT) {
+        if (packet.priority == PacketPriority.SOS || packet.priority == PacketPriority.URGENT || packet.type == PacketType.SOS) {
             highPriorityQueue.offer(pending)
         } else {
             normalPriorityQueue.offer(pending)
@@ -130,7 +130,7 @@ class ReliabilityEngine(
                 // 1. Process in-flight retries
                 val now = System.currentTimeMillis()
                 for ((msgId, pending) in inFlight) {
-                    val isSos = pending.packet.priority == PacketPriority.SOS
+                    val isSos = pending.packet.priority == PacketPriority.SOS || pending.packet.type == PacketType.SOS
                     val backoff = when (pending.attempts) {
                         1 -> 500L
                         2 -> 1000L
@@ -215,7 +215,7 @@ class ReliabilityEngine(
                         updateStats()
                     }
 
-                    PacketType.DATA -> {
+                    PacketType.DATA, PacketType.SOS -> {
                         // Send ACK back immediately
                         sendAck(packet)
 
@@ -251,6 +251,9 @@ class ReliabilityEngine(
         val ackPacket = Packet(
             msgId = dataPacket.msgId,
             senderId = localCallsign,
+            receiverId = dataPacket.senderId,
+            departmentId = dataPacket.departmentId,
+            conversationId = dataPacket.conversationId,
             seq = nextSequenceNumber(),
             lang = dataPacket.lang,
             priority = dataPacket.priority,

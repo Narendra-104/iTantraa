@@ -5,7 +5,8 @@ enum class PacketType(val value: Int) {
     ACK(1),
     NACK(2),
     PING(3),
-    PONG(4);
+    PONG(4),
+    SOS(5);
 
     companion object {
         fun fromValue(value: Int): PacketType {

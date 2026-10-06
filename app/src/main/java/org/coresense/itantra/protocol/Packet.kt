@@ -23,7 +23,7 @@ data class Packet(
     val crc32: Long = 0L
 ) {
     val isEmergency: Boolean
-        get() = priority == PacketPriority.SOS
+        get() = priority == PacketPriority.SOS || type == PacketType.SOS
 
     val hasLocation: Boolean
         get() = latitudeMicrodegrees != null && longitudeMicrodegrees != null

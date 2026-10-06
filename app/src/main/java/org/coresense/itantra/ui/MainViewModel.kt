@@ -380,7 +380,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         text: String,
         priority: PacketPriority = PacketPriority.NORMAL,
         receiverId: String? = null,
-        conversationId: String? = null
+        conversationId: String? = null,
+        departmentId: String? = null,
+        packetType: PacketType? = null
     ) {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return // STRICT RULE: Never send blank or placeholder text
@@ -389,10 +391,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val localIdentity = identityRepository.userIdentity.value
 
         val rawReceiver = if (receiverId.isNullOrBlank() || receiverId == "GLOBAL" || receiverId == "ALL") null else receiverId.trim()
-        val resolvedDept = resolveDepartmentId(rawReceiver)
+        val resolvedDept = departmentId?.let { resolveDepartmentId(it) ?: it } ?: resolveDepartmentId(rawReceiver)
         val isDeptTarget = resolvedDept != null
 
-        // When sending to a department, receiverId is null (broadcast to department per Step 8)
+        // When sending to a department, receiverId is null (broadcast to department per Step 8 & 9)
         val targetReceiver = if (isDeptTarget) null else rawReceiver
         
         // Department ID is either the target department or (if sent by a department device) the sender's department
@@ -412,6 +414,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val msgId = (System.currentTimeMillis() shl 16) or (UUID.randomUUID().hashCode().toLong() and 0xFFFFL)
         val seq = reliabilityEngine.nextSequenceNumber()
 
+        val type = packetType ?: if (priority == PacketPriority.SOS) PacketType.SOS else PacketType.DATA
+
         val packet = Packet(
             msgId = msgId,
             senderId = myDeviceId,
@@ -425,7 +429,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             timestamp = System.currentTimeMillis(),
             latitudeMicrodegrees = latMicro,
             longitudeMicrodegrees = lonMicro,
-            type = PacketType.DATA
+            type = type
         )
 
         activePipelineStage.value = "ENCODE"
@@ -485,7 +489,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val text = "[$serviceName EMERGENCY] $description. $locationStr"
         activePipelineStage.value = "CLASSIFY"
-        sendTextMessage(text, PacketPriority.SOS)
+        val targetDept = resolveDepartmentId(serviceName) ?: "NDRF"
+        sendTextMessage(
+            text = text,
+            priority = PacketPriority.SOS,
+            departmentId = targetDept,
+            packetType = PacketType.SOS
+        )
     }
 
     fun toggleTrackMe() {
@@ -508,7 +518,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun startSosHold() {
+    fun startSosHold(emergencyType: String? = null) {
         sosCountdownJob?.cancel()
         sosCountdownJob = viewModelScope.launch {
             val totalSteps = 20
@@ -517,7 +527,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sosCountdownProgress.value = step.toFloat() / totalSteps.toFloat()
             }
             // 2s Hold confirmed!
-            triggerSosEmergency()
+            triggerSosEmergency(emergencyType)
         }
     }
 
@@ -527,7 +537,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sosCountdownProgress.value = 0f
     }
 
-    private fun triggerSosEmergency() {
+    fun triggerSosEmergency(emergencyType: String? = null) {
         sosCountdownProgress.value = 0f
         isSosActive.value = true
 
@@ -538,8 +548,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "GPS: NO FIX (Searching)"
         }
 
-        val sosText = "EMERGENCY SOS! Immediate evacuation / assistance needed! $locationStr"
-        sendTextMessage(sosText, PacketPriority.SOS)
+        val typeTag = emergencyType?.uppercase() ?: "GENERAL"
+        val targetDept = resolveDepartmentId(emergencyType) ?: "NDRF"
+        val sosText = "[$typeTag EMERGENCY SOS] Immediate evacuation / assistance needed! $locationStr"
+        sendTextMessage(
+            text = sosText,
+            priority = PacketPriority.SOS,
+            departmentId = targetDept,
+            packetType = PacketType.SOS
+        )
     }
 
     fun cancelActiveSos() {
@@ -637,7 +654,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // Play voice or trigger SOS alert
             activePipelineStage.value = "TTS"
-            if (packet.priority == PacketPriority.SOS) {
+            if (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS) {
                 val gps = gpsState.value as? GpsState.Fix
                 sosAlertManager.triggerIncomingSosAlert(packet, gps?.latitude, gps?.longitude)
             } else {
@@ -656,7 +673,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return when {
             clean.contains("NDRF", ignoreCase = true) -> "NDRF"
             clean.contains("Medic", ignoreCase = true) -> "MEDICAL"
-            clean.contains("Police", ignoreCase = true) -> "POLICE"
+            clean.contains("Police", ignoreCase = true) || clean.contains("Woman", ignoreCase = true) || clean.contains("Child", ignoreCase = true) -> "POLICE"
             clean.contains("Fire", ignoreCase = true) || clean.contains("Disaster", ignoreCase = true) -> "FIRE"
             clean.contains("Railway", ignoreCase = true) -> "RAILWAY"
             clean.contains("Civil", ignoreCase = true) -> "CIVIL"
