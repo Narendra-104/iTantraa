@@ -31,7 +31,10 @@ import org.coresense.itantra.ui.theme.SecondaryTeal
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun RadioScreen(viewModel: MainViewModel) {
+fun RadioScreen(
+    viewModel: MainViewModel,
+    onOpenSettings: () -> Unit = {}
+) {
     val transcript by viewModel.liveTranscript.collectAsState()
     val isRecording by viewModel.isRecording.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
@@ -195,7 +198,13 @@ fun RadioScreen(viewModel: MainViewModel) {
                     }
                 }
             }
-            Text(text = "Connection: Wi-Fi ●", color = PrimaryNeonGreen)
+            val activeTransport by viewModel.currentTransportType.collectAsState()
+            val isConnected = connectionState is org.coresense.itantra.link.ConnectionState.Connected
+            Text(
+                text = "Connection: ${activeTransport.displayName} ●",
+                color = if (isConnected) PrimaryNeonGreen else Color.Gray,
+                modifier = Modifier.clickable { onOpenSettings() }
+            )
         }
     }
 }

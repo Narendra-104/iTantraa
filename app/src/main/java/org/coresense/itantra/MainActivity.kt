@@ -160,6 +160,7 @@ fun MainAppScaffold(
     var currentTab by remember { mutableStateOf(NavigationTab.AUDIO) }
     var inDemoScreen by remember { mutableStateOf(false) }
     var inReceiverScreen by remember { mutableStateOf(false) }
+    var inSettingsScreen by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
     var showMyProfile by remember { mutableStateOf(false) }
     var showSosHistory by remember { mutableStateOf(false) }
@@ -170,7 +171,12 @@ fun MainAppScaffold(
     val selectedLang by viewModel.selectedLanguage.collectAsState()
     val strings = remember(selectedLang) { org.coresense.itantra.ui.i18n.AppLocalization.getStrings(selectedLang) }
 
-    if (inReceiverScreen) {
+    if (inSettingsScreen) {
+        SettingsScreen(
+            viewModel = viewModel,
+            onNavigateBack = { inSettingsScreen = false }
+        )
+    } else if (inReceiverScreen) {
         ReceiverScreen(
             viewModel = viewModel,
             onNavigateBack = { inReceiverScreen = false }
@@ -305,6 +311,13 @@ fun MainAppScaffold(
                                         }
                                     )
                                     DropdownMenuItem(
+                                        text = { Text("Link & Network Settings") },
+                                        onClick = { 
+                                            showProfileMenu = false 
+                                            inSettingsScreen = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Sign Out") },
                                         onClick = {
                                             showProfileMenu = false
@@ -354,7 +367,10 @@ fun MainAppScaffold(
                     .padding(padding)
             ) {
                 when (currentTab) {
-                    NavigationTab.AUDIO -> RadioScreen(viewModel = viewModel)
+                    NavigationTab.AUDIO -> RadioScreen(
+                        viewModel = viewModel,
+                        onOpenSettings = { inSettingsScreen = true }
+                    )
                     NavigationTab.EMERGENCY_SOS -> SosScreen(viewModel = viewModel)
                     NavigationTab.TRACK_ME -> TrackMeScreen(viewModel = viewModel)
                     NavigationTab.CHATS -> ChatsScreen(viewModel = viewModel)

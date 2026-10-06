@@ -22,6 +22,7 @@ import org.coresense.itantra.stt.ModelMetadata
 import org.coresense.itantra.stt.ModelStatus
 import org.coresense.itantra.tts.TtsStatus
 import org.coresense.itantra.ui.MainViewModel
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import org.coresense.itantra.ui.theme.DarkSurface
 import org.coresense.itantra.ui.theme.DarkSurfaceVariant
 import org.coresense.itantra.ui.theme.PrimaryNeonGreen
@@ -29,7 +30,8 @@ import org.coresense.itantra.ui.theme.PrimaryNeonGreen
 @Composable
 fun SettingsScreen(
     viewModel: MainViewModel,
-    onNavigateToDemo: () -> Unit,
+    onNavigateToDemo: () -> Unit = {},
+    onNavigateBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val callsign by viewModel.callsign.collectAsState()
@@ -49,11 +51,25 @@ fun SettingsScreen(
             .padding(14.dp)
     ) {
         item {
-            Text(
-                text = "RADIO & LINK SETTINGS",
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onNavigateBack, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "RADIO & LINK SETTINGS",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
         }
 
