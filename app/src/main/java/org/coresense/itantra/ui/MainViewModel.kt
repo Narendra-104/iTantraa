@@ -2,6 +2,9 @@ package org.coresense.itantra.ui
 
 import android.app.Application
 import android.content.Context
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -297,6 +300,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         sendTextMessage(sentence, PacketPriority.NORMAL)
                                     }
                                 }
+                            } else {
+                                val err = res.exceptionOrNull()?.message ?: "STT Failed"
+                                liveTranscript.value = err
                             }
                         }
                     }
@@ -315,68 +321,86 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         liveTranscript.value = ""
     }
 
-    private var speechRecognizer: android.speech.SpeechRecognizer? = null
-
     fun onPttPressed() {
         if (!isWalkieTalkieMode.value) return
+
+        // Verify microphone recording permission
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            liveTranscript.value = "Microphone permission required"
+            activePipelineStage.value = "IDLE"
+            return
+        }
+
         activePipelineStage.value = "MIC"
         liveTranscript.value = "Listening..."
         TransmissionService.start(context, "Walkie-Talkie Transmitting")
 
-        // Ensure we are on main thread for SpeechRecognizer
-        viewModelScope.launch(Dispatchers.Main) {
-            if (speechRecognizer == null) {
-                speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
-            }
-            val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, selectedLanguage.value.bcp47)
-                putExtra(android.speech.RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
+        synchronized(pttAudioBuffer) {
+            pttAudioBuffer.clear()
+        }
+        audioRecorder.start(viewModelScope)
 
-            speechRecognizer?.setRecognitionListener(object : android.speech.RecognitionListener {
-                override fun onReadyForSpeech(params: android.os.Bundle?) {}
-                override fun onBeginningOfSpeech() { activePipelineStage.value = "VAD" }
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() { activePipelineStage.value = "STT" }
-                override fun onError(error: Int) {
-                    liveTranscript.value = "Error: $error"
-                    activePipelineStage.value = "IDLE"
-                }
-                override fun onResults(results: android.os.Bundle?) {
-                    val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
-                    val recognized = matches?.firstOrNull()?.trim() ?: ""
-                    
-                    if (recognized.isNotBlank()) {
-                        liveTranscript.value = recognized
-                        activePipelineStage.value = "CLASSIFY"
-                        if (isReadBackEnabled.value) {
-                            readBackPendingText.value = recognized
-                            viewModelScope.launch {
-                                ttsEngine.speak(recognized, selectedLanguage.value)
-                            }
-                        } else {
-                            sendTextMessage(recognized, PacketPriority.NORMAL)
-                        }
-                    } else {
-                        liveTranscript.value = "No clear speech recognized."
-                        activePipelineStage.value = "IDLE"
+        audioCaptureJob?.cancel()
+        audioCaptureJob = viewModelScope.launch(Dispatchers.IO) {
+            audioRecorder.audioFrames.collect { frame ->
+                synchronized(pttAudioBuffer) {
+                    for (sample in frame) {
+                        pttAudioBuffer.add(sample)
                     }
                 }
-                override fun onPartialResults(partialResults: android.os.Bundle?) {}
-                override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
-            })
-            speechRecognizer?.startListening(intent)
+            }
         }
     }
 
     fun onPttReleased() {
         if (!isWalkieTalkieMode.value) return
-        viewModelScope.launch(Dispatchers.Main) {
-            speechRecognizer?.stopListening()
-        }
+        audioCaptureJob?.cancel()
+        audioCaptureJob = null
+        audioRecorder.stop()
         TransmissionService.stop(context)
+
+        val capturedSamples: ShortArray
+        synchronized(pttAudioBuffer) {
+            capturedSamples = pttAudioBuffer.toShortArray()
+            pttAudioBuffer.clear()
+        }
+
+        if (capturedSamples.isEmpty()) {
+            activePipelineStage.value = "IDLE"
+            liveTranscript.value = "No audio captured"
+            return
+        }
+
+        activePipelineStage.value = "STT"
+        isProcessingStt.value = true
+        liveTranscript.value = "Transcribing..."
+
+        viewModelScope.launch(Dispatchers.IO) {
+            sttEngine.initialize(selectedLanguage.value)
+            val sttRes = sttEngine.transcribe(capturedSamples)
+            isProcessingStt.value = false
+
+            if (sttRes.isSuccess) {
+                val recognized = sttRes.getOrThrow().text.trim()
+                if (recognized.isNotBlank()) {
+                    liveTranscript.value = recognized
+                    activePipelineStage.value = "CLASSIFY"
+                    if (isReadBackEnabled.value) {
+                        readBackPendingText.value = recognized
+                        ttsEngine.speak(recognized, selectedLanguage.value)
+                    } else {
+                        sendTextMessage(recognized, PacketPriority.NORMAL)
+                    }
+                } else {
+                    liveTranscript.value = "No clear speech recognized."
+                    activePipelineStage.value = "IDLE"
+                }
+            } else {
+                val errorMsg = sttRes.exceptionOrNull()?.message ?: "STT Error"
+                liveTranscript.value = errorMsg
+                activePipelineStage.value = "IDLE"
+            }
+        }
     }
 
     fun confirmReadBackSend(editedText: String? = null) {

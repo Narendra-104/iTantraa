@@ -188,8 +188,10 @@ fun RadioScreen(
                     onDismissRequest = { languageMenuExpanded = false }
                 ) {
                     org.coresense.itantra.protocol.Language.entries.forEach { lang ->
+                        val isReady = viewModel.modelRegistry.isModelInstalled(lang)
+                        val suffix = if (isReady) " [Ready]" else " [Model Unavailable]"
                         DropdownMenuItem(
-                            text = { Text(lang.displayName) },
+                            text = { Text("${lang.displayName}$suffix") },
                             onClick = {
                                 viewModel.setAppLanguage(lang)
                                 languageMenuExpanded = false

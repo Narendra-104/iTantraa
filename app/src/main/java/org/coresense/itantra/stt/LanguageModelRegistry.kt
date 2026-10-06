@@ -32,7 +32,10 @@ data class ModelMetadata(
  * Models are side-loaded into app storage (adb/file picker/bundled assets),
  * NEVER downloaded from the internet at runtime.
  */
-class LanguageModelRegistry(private val context: Context) {
+open class LanguageModelRegistry(
+    private val context: Context,
+    private val customBaseDir: File? = null
+) {
 
     private val _models = MutableStateFlow<Map<Language, ModelMetadata>>(emptyMap())
     val models: StateFlow<Map<Language, ModelMetadata>> = _models.asStateFlow()
@@ -54,7 +57,7 @@ class LanguageModelRegistry(private val context: Context) {
             val actualSize = if (isNeuralInstalled) {
                 (modelFile.length() + if (tokensFile.exists()) tokensFile.length() else 0L) / (1024f * 1024f)
             } else {
-                1.2f // Built-in acoustic pack size
+                0f
             }
 
             val defaultSizeMb = when (lang) {
@@ -74,25 +77,37 @@ class LanguageModelRegistry(private val context: Context) {
             val engine = if (isNeuralInstalled) {
                 if (lang == Language.ENGLISH) "sherpa-onnx (Zipformer)" else "AI4Bharat IndicConformer ONNX"
             } else {
-                "Offline Acoustic & VAD Engine (${lang.displayName})"
+                "Offline Model Unavailable (${lang.displayName})"
             }
 
             map[lang] = ModelMetadata(
                 language = lang,
                 engineName = engine,
-                modelFilename = if (isNeuralInstalled) "model.onnx" else "builtin_acoustic",
-                tokensFilename = "tokens.txt",
+                modelFilename = if (isNeuralInstalled) "model.onnx" else "MISSING",
+                tokensFilename = if (isNeuralInstalled && tokensFile.exists()) "tokens.txt" else "MISSING",
                 estimatedSizeMb = defaultSizeMb,
                 actualSizeMb = actualSize,
-                status = ModelStatus.INSTALLED,
-                localDirectoryPath = if (isNeuralInstalled) langDir.absolutePath else "builtin_assets"
+                status = if (isNeuralInstalled) ModelStatus.INSTALLED else ModelStatus.MISSING,
+                localDirectoryPath = if (isNeuralInstalled) langDir.absolutePath else null
             )
         }
 
         _models.value = map
     }
 
-    fun getModelsStorageDirectory(): File {
+    fun isModelInstalled(lang: Language): Boolean {
+        return getModelFile(lang) != null
+    }
+
+    fun getInstalledLanguages(): List<Language> {
+        return Language.entries.filter { isModelInstalled(it) }
+    }
+
+    open fun getModelsStorageDirectory(): File {
+        if (customBaseDir != null) {
+            if (!customBaseDir.exists()) customBaseDir.mkdirs()
+            return customBaseDir
+        }
         val ext = context.getExternalFilesDir("models/stt")
         if (ext != null && ext.exists()) return ext
         val internal = File(context.filesDir, "models/stt")

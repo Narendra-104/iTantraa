@@ -101,8 +101,10 @@ fun SettingsScreen(
                             onDismissRequest = { langMenuExpanded = false }
                         ) {
                             Language.entries.forEach { lang ->
+                                val isInstalled = modelsMap[lang]?.status == org.coresense.itantra.stt.ModelStatus.INSTALLED
+                                val statusSuffix = if (isInstalled) " [Ready]" else " [Model Unavailable]"
                                 DropdownMenuItem(
-                                    text = { Text("${lang.nativeName} — ${lang.displayName}") },
+                                    text = { Text("${lang.nativeName} — ${lang.displayName}$statusSuffix") },
                                     onClick = {
                                         viewModel.setAppLanguage(lang)
                                         langMenuExpanded = false
