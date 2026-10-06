@@ -27,7 +27,7 @@ data class PendingMessage(
     var state: DeliveryState,
     var attempts: Int = 0,
     var lastSentTimeMs: Long = 0L,
-    val initialQueuedTimeMs: Long = SystemClock.elapsedRealtime()
+    val initialQueuedTimeMs: Long = System.currentTimeMillis()
 )
 
 data class ReliabilityStats(
@@ -53,8 +53,15 @@ data class ReliabilityStats(
 class ReliabilityEngine(
     private val transport: LinkTransport,
     private val scope: CoroutineScope,
-    private val localCallsign: String = "ALPHA-1"
+    private val localCallsign: String = "ALPHA-1",
+    val maxNormalAttempts: Int = DEFAULT_MAX_NORMAL_ATTEMPTS,
+    val maxSosAttempts: Int = DEFAULT_MAX_SOS_ATTEMPTS
 ) {
+
+    companion object {
+        const val DEFAULT_MAX_NORMAL_ATTEMPTS = 4
+        const val DEFAULT_MAX_SOS_ATTEMPTS = 8
+    }
 
     private val seqCounter = AtomicInteger(1)
 
@@ -121,7 +128,7 @@ class ReliabilityEngine(
         workerJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 // 1. Process in-flight retries
-                val now = SystemClock.elapsedRealtime()
+                val now = System.currentTimeMillis()
                 for ((msgId, pending) in inFlight) {
                     val isSos = pending.packet.priority == PacketPriority.SOS
                     val backoff = when (pending.attempts) {
@@ -132,7 +139,7 @@ class ReliabilityEngine(
                     }
 
                     if (now - pending.lastSentTimeMs >= backoff) {
-                        val maxAttempts = if (isSos) Int.MAX_VALUE else 4
+                        val maxAttempts = if (isSos) maxSosAttempts else maxNormalAttempts
                         if (pending.attempts < maxAttempts) {
                             pending.attempts++
                             totalRetries++
@@ -161,7 +168,7 @@ class ReliabilityEngine(
     }
 
     private suspend fun sendPacketOverWire(pending: PendingMessage) {
-        pending.lastSentTimeMs = SystemClock.elapsedRealtime()
+        pending.lastSentTimeMs = System.currentTimeMillis()
         pending.state = DeliveryState.Sending
         _messageDeliveryUpdates.emit(Pair(pending.packet.msgId, DeliveryState.Sending))
 
@@ -184,7 +191,11 @@ class ReliabilityEngine(
             transport.incomingPackets.collect { rawBytes ->
                 val decodeResult = PacketCodec.decode(rawBytes)
                 if (decodeResult.isFailure) {
-                    // CRC failure or corrupted payload - drop or ignore
+                    val ex = decodeResult.exceptionOrNull()
+                    if (ex is org.coresense.itantra.protocol.CrcMismatchException) {
+                        sendNack(ex.partialPacket)
+                    }
+                    // corrupted payload - drop or ignore
                     return@collect
                 }
 
@@ -196,7 +207,7 @@ class ReliabilityEngine(
                         totalAcksReceived++
                         val inFlightMsg = inFlight.remove(packet.msgId)
                         if (inFlightMsg != null) {
-                            val rttMs = SystemClock.elapsedRealtime() - inFlightMsg.lastSentTimeMs
+                            val rttMs = System.currentTimeMillis() - inFlightMsg.lastSentTimeMs
                             totalRttSum += rttMs
                             inFlightMsg.state = DeliveryState.Delivered(rttMs)
                             _messageDeliveryUpdates.emit(Pair(packet.msgId, inFlightMsg.state))
@@ -252,6 +263,20 @@ class ReliabilityEngine(
             totalAcksSent++
             updateStats()
         }
+    }
+
+    private suspend fun sendNack(corruptedPacket: Packet) {
+        val nackPacket = Packet(
+            msgId = corruptedPacket.msgId,
+            senderId = localCallsign,
+            seq = nextSequenceNumber(),
+            lang = corruptedPacket.lang,
+            priority = corruptedPacket.priority,
+            text = "NACK:CRC",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.NACK
+        )
+        transport.send(PacketCodec.encode(nackPacket))
     }
 
     private suspend fun sendPong(pingPacket: Packet) {

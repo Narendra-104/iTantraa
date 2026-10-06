@@ -170,7 +170,7 @@ class BenchmarkRunner(
                 results.add(res)
 
                 // Save to Room DB
-                database.metricSampleDao().insertSample(
+                org.coresense.itantra.data.repository.MetricRepository(database.metricSampleDao()).insertSample(
                     MetricSampleEntity(
                         languageCode = item.language.code,
                         rtf = rtf,

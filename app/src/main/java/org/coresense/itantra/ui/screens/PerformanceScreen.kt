@@ -416,7 +416,7 @@ fun BenchmarkResultRow(result: org.coresense.itantra.metrics.BenchmarkResult) {
 
 private suspend fun exportMetricsToCsv(context: Context) {
     try {
-        val samples = ITantraApp.instance.database.metricSampleDao().getAllSamples()
+        val samples = org.coresense.itantra.data.repository.MetricRepository(ITantraApp.instance.database.metricSampleDao()).getAllSamples()
         val file = File(context.getExternalFilesDir(null), "itantra_telemetry_${System.currentTimeMillis()}.csv")
         FileWriter(file).use { writer ->
             writer.append("Timestamp,Language,RTF,WER,RAM_PSS_MB,CPU_Percent,Battery_Percent,Payload_Bytes,PCM_Bytes,Compression_Ratio,Latency_MS\n")

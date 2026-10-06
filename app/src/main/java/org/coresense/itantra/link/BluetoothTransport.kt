@@ -99,9 +99,18 @@ class BluetoothTransport(
         startServerListener()
     }
 
+    private fun hasPermissions(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+        }
+        return true
+    }
+
     @SuppressLint("MissingPermission")
     private fun startServerListener() {
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) return
+        if (!hasPermissions()) return
 
         serverJob?.cancel()
         serverJob = scope.launch(Dispatchers.IO) {
@@ -137,6 +146,9 @@ class BluetoothTransport(
     override fun startDiscovery(): Result<Unit> {
         val adapter = bluetoothAdapter ?: return Result.failure(IllegalStateException("Bluetooth not supported on this device"))
         if (!adapter.isEnabled) return Result.failure(IllegalStateException("Bluetooth is turned off"))
+        if (!hasPermissions()) return Result.failure(SecurityException("Bluetooth permissions not granted"))
+
+        startServerListener()
 
         return try {
             // Load bonded devices first
@@ -190,6 +202,7 @@ class BluetoothTransport(
     @SuppressLint("MissingPermission")
     override fun connect(peer: PeerDevice): Result<Unit> {
         val adapter = bluetoothAdapter ?: return Result.failure(IllegalStateException("Bluetooth not available"))
+        if (!hasPermissions()) return Result.failure(SecurityException("Bluetooth permissions not granted"))
         stopDiscovery()
 
         _connectionState.value = ConnectionState.Connecting(peer)

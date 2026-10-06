@@ -9,6 +9,9 @@ package org.coresense.itantra.protocol
 data class Packet(
     val msgId: Long,
     val senderId: String,
+    val receiverId: String? = null,
+    val departmentId: String? = null,
+    val conversationId: String? = null,
     val seq: Int,
     val lang: Language,
     val priority: PacketPriority,

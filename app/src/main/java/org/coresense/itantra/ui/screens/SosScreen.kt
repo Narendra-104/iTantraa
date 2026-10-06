@@ -96,65 +96,37 @@ fun SosScreen(viewModel: MainViewModel) {
 
         Spacer(modifier = Modifier.height(48.dp))
 
-        // Location Info
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = DarkSurface),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.Start
-            ) {
-                if (gpsState is GpsState.Fix) {
-                    val fix = gpsState as GpsState.Fix
-                    Text("Location: GPS AVAILABLE", color = PrimaryNeonGreen, fontWeight = FontWeight.Bold)
-                    Text("Lat: ${String.format("%.4f", fix.latitude)}", color = Color.White)
-                    Text("Long: ${String.format("%.4f", fix.longitude)}", color = Color.White)
-                } else {
-                    Text("Location: SEARCHING...", color = Color.Yellow, fontWeight = FontWeight.Bold)
-                    Text("Lat: --", color = Color.Gray)
-                    Text("Long: --", color = Color.Gray)
-                }
-            }
-        }
+
 
         Spacer(modifier = Modifier.height(16.dp))
         
         Text("Select Emergency Type:", color = Color.White, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            emergencies.chunked(3).forEach { rowItems ->
+            emergencies.chunked(2).forEach { rowItems ->
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     rowItems.forEach { item ->
                         val isSelected = selectedEmergency == item
                         Box(
                             modifier = Modifier
                                 .weight(1f)
+                                .height(48.dp)
                                 .background(if (isSelected) Color.Red else DarkSurface, RoundedCornerShape(8.dp))
                                 .border(1.dp, if (isSelected) Color.Red else Color.Gray, RoundedCornerShape(8.dp))
-                                .clickable { selectedEmergency = item }
-                                .padding(8.dp),
+                                .clickable { selectedEmergency = item },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(item, color = Color.White, fontSize = 12.sp)
+                            Text(item, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
-                    repeat(3 - rowItems.size) { Spacer(modifier = Modifier.weight(1f)) }
+                    if (rowItems.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.weight(1f))
 
-        Button(
-            onClick = { viewModel.cancelActiveSos() },
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Text("CANCEL", color = Color.White, fontWeight = FontWeight.Bold)
-        }
         
         Spacer(modifier = Modifier.height(16.dp))
     }

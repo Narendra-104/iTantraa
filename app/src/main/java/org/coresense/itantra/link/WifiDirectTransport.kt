@@ -148,10 +148,19 @@ class WifiDirectTransport(
         }
     }
 
+    private fun hasPermissions(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.NEARBY_WIFI_DEVICES) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+        }
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+        return true
+    }
+
     @SuppressLint("MissingPermission")
     override fun startDiscovery(): Result<Unit> {
         val manager = p2pManager ?: return Result.failure(IllegalStateException("Wi-Fi Direct not supported"))
         val chan = channel ?: return Result.failure(IllegalStateException("Wi-Fi Direct Channel null"))
+        if (!hasPermissions()) return Result.failure(SecurityException("Wi-Fi Direct permissions not granted"))
 
         if (!isReceiverRegistered) {
             val filter = IntentFilter().apply {
@@ -186,6 +195,7 @@ class WifiDirectTransport(
     override fun connect(peer: PeerDevice): Result<Unit> {
         val manager = p2pManager ?: return Result.failure(IllegalStateException("Wi-Fi Direct not available"))
         val chan = channel ?: return Result.failure(IllegalStateException("Wi-Fi Direct Channel null"))
+        if (!hasPermissions()) return Result.failure(SecurityException("Wi-Fi Direct permissions not granted"))
 
         _connectionState.value = ConnectionState.Connecting(peer)
 

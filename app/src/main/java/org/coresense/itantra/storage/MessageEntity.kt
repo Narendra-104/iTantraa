@@ -16,6 +16,9 @@ data class MessageEntity(
     val lang: String,
     val priority: String,
     val text: String,
+    val receiverId: String? = null,
+    val departmentId: String? = null,
+    val conversationId: String? = null,
     val timestamp: Long,
     val latitudeMicrodegrees: Int?,
     val longitudeMicrodegrees: Int?,
@@ -31,6 +34,15 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE priority = 'SOS' ORDER BY timestamp DESC")
     fun getEmergencyMessages(): Flow<List<MessageEntity>>
+
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp ASC")
+    fun getConversationMessages(conversationId: String): Flow<List<MessageEntity>>
+
+    @Query("SELECT * FROM messages WHERE msgId = :msgId LIMIT 1")
+    suspend fun getMessageById(msgId: Long): MessageEntity?
+
+    @Query("SELECT * FROM messages WHERE departmentId = :departmentId ORDER BY timestamp ASC")
+    fun getMessagesForDepartment(departmentId: String): Flow<List<MessageEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: MessageEntity)

@@ -86,6 +86,7 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
 
     implementation(libs.onnxruntime.android)
     implementation(libs.play.services.location)

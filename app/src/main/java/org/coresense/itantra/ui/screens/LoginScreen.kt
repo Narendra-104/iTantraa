@@ -18,6 +18,8 @@ import org.coresense.itantra.ui.MainViewModel
 import org.coresense.itantra.ui.i18n.AppLocalization
 import org.coresense.itantra.ui.theme.DarkSurface
 import org.coresense.itantra.ui.theme.PrimaryNeonGreen
+import org.coresense.itantra.identity.Role
+import org.coresense.itantra.identity.Department
 
 @Composable
 fun LoginScreen(
@@ -31,14 +33,16 @@ fun LoginScreen(
     val strings = remember(currentLang) { AppLocalization.getStrings(currentLang) }
 
     var callsignInput by remember { mutableStateOf(viewModel.callsign.value) }
-    var selectedUnit by remember { mutableStateOf("NDRF Search & Rescue") }
+    var selectedUnit by remember { mutableStateOf("NDRF") }
 
     val units = listOf(
-        "NDRF Search & Rescue",
-        "Quick Medical Response",
-        "Fire & Disaster Evacuation",
-        "Tactical Patrol Squad",
-        "Civil Defense & Volunteers"
+        "NDRF",
+        "Medical",
+        "Police",
+        "Fire",
+        "Disaster",
+        "Railway",
+        "Civil Defence"
     )
 
     LazyColumn(
@@ -47,7 +51,7 @@ fun LoginScreen(
             .background(Color(0xFFF0F0F0)) // Light background
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)
     ) {
         // Section 2: Operator Login & Squad Selection
         item {
@@ -202,6 +206,17 @@ fun LoginScreen(
                 onClick = {
                     if (callsignInput.isNotBlank()) {
                         viewModel.callsign.value = callsignInput.trim()
+                        val dept = when (selectedUnit) {
+                            "NDRF" -> Department.NDRF_SEARCH_RESCUE
+                            "Medical" -> Department.MEDICAL
+                            "Police" -> Department.POLICE
+                            "Fire" -> Department.FIRE_DISASTER
+                            "Disaster" -> Department.FIRE_DISASTER
+                            "Railway" -> Department.RAILWAY_COMMISSION
+                            "Civil Defence" -> Department.CIVIL_DEFENCE
+                            else -> null
+                        }
+                        viewModel.identityRepository.saveIdentity(callsignInput.trim(), Role.DEPARTMENT, dept)
                     }
                     onLoginSuccess()
                 },

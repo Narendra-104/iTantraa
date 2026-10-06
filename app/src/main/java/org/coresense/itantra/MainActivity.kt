@@ -32,6 +32,7 @@ import org.coresense.itantra.ui.theme.ITantraTheme
 import org.coresense.itantra.ui.theme.PrimaryNeonGreen
 
 enum class AppState {
+    SPLASH,
     LANGUAGE,
     LOGIN,
     USER_INFO,
@@ -92,9 +93,14 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    var appState by remember { mutableStateOf(AppState.LANGUAGE) }
+                    var appState by remember { mutableStateOf(AppState.SPLASH) }
 
                     when (appState) {
+                        AppState.SPLASH -> {
+                            SplashScreen(
+                                onTimeout = { appState = AppState.LANGUAGE }
+                            )
+                        }
                         AppState.LANGUAGE -> {
                             LanguageScreen(
                                 viewModel = viewModel,
@@ -110,7 +116,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         AppState.USER_INFO -> {
-                            UserInfoScreen(
+                            UserInfoScreen(viewModel = viewModel, 
                                 onContinue = { appState = AppState.HOME }
                             )
                         }
@@ -153,6 +159,7 @@ fun MainAppScaffold(
 ) {
     var currentTab by remember { mutableStateOf(NavigationTab.AUDIO) }
     var inDemoScreen by remember { mutableStateOf(false) }
+    var inReceiverScreen by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
     var showMyProfile by remember { mutableStateOf(false) }
     var showSosHistory by remember { mutableStateOf(false) }
@@ -163,7 +170,12 @@ fun MainAppScaffold(
     val selectedLang by viewModel.selectedLanguage.collectAsState()
     val strings = remember(selectedLang) { org.coresense.itantra.ui.i18n.AppLocalization.getStrings(selectedLang) }
 
-    if (inDemoScreen) {
+    if (inReceiverScreen) {
+        ReceiverScreen(
+            viewModel = viewModel,
+            onNavigateBack = { inReceiverScreen = false }
+        )
+    } else if (inDemoScreen) {
         DemoScreen(
             viewModel = viewModel,
             onNavigateBack = { inDemoScreen = false }
@@ -283,6 +295,13 @@ fun MainAppScaffold(
                                         onClick = { 
                                             showProfileMenu = false 
                                             showTopQuestions = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Department Inbox") },
+                                        onClick = { 
+                                            showProfileMenu = false 
+                                            inReceiverScreen = true
                                         }
                                     )
                                     DropdownMenuItem(

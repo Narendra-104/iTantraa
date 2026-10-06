@@ -26,25 +26,38 @@
         .subtitle {
             font-size: 1.2rem;
             color: #aaaaaa;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
+        }
+        .badge {
+            background-color: #1b3b1b;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-bottom: 30px;
+            display: inline-block;
         }
         .container {
             display: flex;
-            gap: 40px;
+            gap: 30px;
             flex-wrap: wrap;
             justify-content: center;
-            max-width: 800px;
+            max-width: 860px;
         }
         .card {
             background-color: #1e1e1e;
             border: 2px solid #333;
             border-radius: 12px;
-            padding: 40px 30px;
-            width: 300px;
+            padding: 35px 25px;
+            width: 320px;
             display: flex;
             flex-direction: column;
             align-items: center;
             transition: transform 0.3s, border-color 0.3s;
+            box-sizing: border-box;
         }
         .card:hover {
             transform: translateY(-5px);
@@ -52,64 +65,79 @@
         }
         .card h2 {
             margin-top: 0;
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             color: #ffffff;
         }
         .card p {
             color: #cccccc;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
         .small-text {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             color: #888888;
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
         .action-btn {
             background-color: #00ff00;
             color: #121212;
             text-decoration: none;
-            padding: 12px 25px;
-            font-size: 1.1rem;
+            padding: 12px 20px;
+            font-size: 1.05rem;
             font-weight: bold;
             border-radius: 8px;
             border: none;
             cursor: pointer;
             transition: background-color 0.3s;
-            width: 80%;
+            width: 90%;
+            display: inline-block;
+            box-sizing: border-box;
         }
         .action-btn:hover {
             background-color: #00cc00;
         }
-        .btn-outline {
-            background-color: transparent;
-            color: #00ff00;
-            border: 2px solid #00ff00;
+        .secondary-link {
+            color: #888888;
+            font-size: 0.8rem;
+            text-decoration: underline;
+            margin-top: 15px;
         }
-        .btn-outline:hover {
-            background-color: rgba(0, 255, 0, 0.1);
+        .features-list {
+            text-align: left;
+            font-size: 0.8rem;
+            color: #aaaaaa;
+            margin-top: 15px;
+            line-height: 1.6;
         }
     </style>
 </head>
 <body>
     <h1>iTantra Demo</h1>
-    <p class="subtitle">SIH Presentation Portal</p>
+    <p class="subtitle">Off-Grid Disaster Mesh & Department Communication</p>
+    <div class="badge">LATEST BUILD: v8 (Step 8: Department Receiver & Reply)</div>
     
     <div class="container">
-
         <!-- QR Code Card -->
         <div class="card">
             <h2>SCAN TO DOWNLOAD</h2>
             <p>Scan with Mobile</p>
-            <p class="small-text">Use your mobile to install</p>
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://raw.githubusercontent.com/Narendra-104/iTantraa/main/iTantra-v5.apk" alt="Download QR Code" style="width: 150px; height: 150px; border-radius: 8px; margin-top: 10px;" />
+            <p class="small-text">Instant direct download to Android phone</p>
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https://raw.githubusercontent.com/Narendra-104/iTantraa/main/iTantra-v8.apk" alt="Download QR Code" style="width: 160px; height: 160px; border-radius: 8px; margin-top: 5px;" />
+            <p class="small-text" style="margin-top: 12px; margin-bottom: 0;">Direct GitHub Raw CDN</p>
         </div>
 
         <!-- Android App Card -->
         <div class="card">
             <h2>📱 ANDROID APP</h2>
-            <p>Download APK</p>
-            <p class="small-text">Install and test on an Android phone</p>
-            <a href="iTantra-v5.apk" download class="action-btn" style="box-sizing: border-box;">Download APK</a>
+            <p>Download Latest APK (v8)</p>
+            <p class="small-text">Real Bluetooth & Wi-Fi Direct Mesh Build</p>
+            <a href="iTantra-v8.apk" download class="action-btn">Download APK (v8)</a>
+            <a href="https://raw.githubusercontent.com/Narendra-104/iTantraa/main/iTantra-v8.apk" target="_blank" class="secondary-link">Alternative Direct Link (GitHub CDN)</a>
+            <div class="features-list">
+                ✔ Bluetooth Classic & Wi-Fi Direct Transports<br>
+                ✔ ACK/NACK Reliability & Finite Retries<br>
+                ✔ Direct 1-on-1 End-to-End Chat<br>
+                ✔ Department Routing & Threaded Reply
+            </div>
         </div>
     </div>
 </body>

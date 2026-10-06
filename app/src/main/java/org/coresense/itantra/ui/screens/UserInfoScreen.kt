@@ -12,15 +12,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.coresense.itantra.identity.Role
+import org.coresense.itantra.ui.MainViewModel
 import org.coresense.itantra.ui.theme.DarkSurface
 import org.coresense.itantra.ui.theme.PrimaryNeonGreen
 
 @Composable
 fun UserInfoScreen(
+    viewModel: MainViewModel,
     onContinue: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var userId by remember { mutableStateOf("") }
+    val identityState by viewModel.identityRepository.userIdentity.collectAsState()
+    
+    var userId by remember { mutableStateOf(identityState?.userId ?: "") }
+    var name by remember { mutableStateOf(identityState?.name ?: "") }
     var aadhar by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
@@ -49,12 +55,25 @@ fun UserInfoScreen(
                         fontSize = 18.sp,
                         color = Color.Black
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Device ID: ${viewModel.identityRepository.getDeviceId()}",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
                     Spacer(modifier = Modifier.height(10.dp))
                     
                     OutlinedTextField(
                         value = userId,
                         onValueChange = { userId = it },
                         label = { Text("User ID") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Full Name") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -103,7 +122,10 @@ fun UserInfoScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     
                     Button(
-                        onClick = onContinue,
+                        onClick = {
+                            viewModel.identityRepository.saveIdentity(name = name, role = Role.USER)
+                            onContinue()
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp),
@@ -111,7 +133,7 @@ fun UserInfoScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonGreen)
                     ) {
                         Text(
-                            text = "Submit",
+                            text = "Save & Continue",
                             color = DarkSurface,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp

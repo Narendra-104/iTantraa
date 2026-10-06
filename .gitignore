@@ -10,4 +10,5 @@
 local.properties
 /app/build
 *.apk
-!iTantra-v4.apk
+!iTantra-v8.apk
+!iTantra-v5.apk

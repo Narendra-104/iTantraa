@@ -29,6 +29,9 @@ object PacketCodec {
     private const val TAG_LON = 9
     private const val TAG_TYPE = 10
     private const val TAG_CRC32 = 11
+    private const val TAG_RECEIVER_ID = 12
+    private const val TAG_DEPARTMENT_ID = 13
+    private const val TAG_CONVERSATION_ID = 14
 
     private const val WIRE_VARINT = 0
     private const val WIRE_LENGTH_DELIMITED = 2
@@ -85,6 +88,27 @@ object PacketCodec {
         writeTag(out, TAG_TYPE, WIRE_VARINT)
         writeVarint32(out, packet.type.value)
 
+        if (packet.receiverId != null) {
+            val rBytes = packet.receiverId.toByteArray(Charsets.UTF_8)
+            writeTag(out, TAG_RECEIVER_ID, WIRE_LENGTH_DELIMITED)
+            writeVarint32(out, rBytes.size)
+            out.write(rBytes)
+        }
+
+        if (packet.departmentId != null) {
+            val dBytes = packet.departmentId.toByteArray(Charsets.UTF_8)
+            writeTag(out, TAG_DEPARTMENT_ID, WIRE_LENGTH_DELIMITED)
+            writeVarint32(out, dBytes.size)
+            out.write(dBytes)
+        }
+
+        if (packet.conversationId != null) {
+            val cBytes = packet.conversationId.toByteArray(Charsets.UTF_8)
+            writeTag(out, TAG_CONVERSATION_ID, WIRE_LENGTH_DELIMITED)
+            writeVarint32(out, cBytes.size)
+            out.write(cBytes)
+        }
+
         val rawBytesWithoutCrc = out.toByteArray()
         val calculatedCrc = Crc32Util.calculate(rawBytesWithoutCrc)
 
@@ -112,6 +136,9 @@ object PacketCodec {
             var lat: Int? = null
             var lon: Int? = null
             var type: PacketType = PacketType.DATA
+            var receiverId: String? = null
+            var departmentId: String? = null
+            var conversationId: String? = null
             var crc32: Long = 0L
 
             var crcOffset = -1
@@ -151,6 +178,24 @@ object PacketCodec {
                         val tVal = readVarint32(stream) ?: 0
                         type = PacketType.fromValue(tVal)
                     }
+                    TAG_RECEIVER_ID -> {
+                        val len = readVarint32(stream) ?: 0
+                        val buf = ByteArray(len)
+                        stream.read(buf)
+                        receiverId = String(buf, Charsets.UTF_8)
+                    }
+                    TAG_DEPARTMENT_ID -> {
+                        val len = readVarint32(stream) ?: 0
+                        val buf = ByteArray(len)
+                        stream.read(buf)
+                        departmentId = String(buf, Charsets.UTF_8)
+                    }
+                    TAG_CONVERSATION_ID -> {
+                        val len = readVarint32(stream) ?: 0
+                        val buf = ByteArray(len)
+                        stream.read(buf)
+                        conversationId = String(buf, Charsets.UTF_8)
+                    }
                     TAG_CRC32 -> {
                         // Fixed 32
                         crcOffset = data.size - stream.available() - 1 // tag byte already consumed
@@ -166,7 +211,8 @@ object PacketCodec {
             if (crcOffset > 0) {
                 val expectedCrc = Crc32Util.calculate(data, 0, crcOffset)
                 if (expectedCrc != crc32) {
-                    return Result.failure(IllegalStateException("CRC32 mismatch: calculated $expectedCrc, received $crc32"))
+                    val partial = Packet(msgId = msgId, senderId = senderId, seq = seq, lang = lang, priority = priority, receiverId = receiverId, departmentId = departmentId, conversationId = conversationId, text = text, timestamp = timestamp, latitudeMicrodegrees = lat, longitudeMicrodegrees = lon, type = type, crc32 = crc32)
+                    return Result.failure(CrcMismatchException(partial, "CRC32 mismatch: calculated $expectedCrc, received $crc32"))
                 }
             }
 
@@ -182,6 +228,9 @@ object PacketCodec {
                     latitudeMicrodegrees = lat,
                     longitudeMicrodegrees = lon,
                     type = type,
+                    receiverId = receiverId,
+                    departmentId = departmentId,
+                    conversationId = conversationId,
                     crc32 = crc32
                 )
             )

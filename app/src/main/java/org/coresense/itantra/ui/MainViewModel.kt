@@ -53,15 +53,21 @@ import org.coresense.itantra.tts.OfflineAndroidTtsEngine
 import org.coresense.itantra.tts.TtsEngine
 import org.coresense.itantra.vad.SileroVadDetector
 import org.coresense.itantra.vad.VadEvent
+import org.coresense.itantra.identity.Department
+import org.coresense.itantra.identity.Role
+import org.coresense.itantra.storage.ConversationEntity
 import java.util.UUID
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val context: Context = application.applicationContext
     private val database = ITantraApp.instance.database
+    val identityRepository = org.coresense.itantra.data.repository.IdentityRepository(context)
+    private val messageRepository = org.coresense.itantra.data.repository.MessageRepository(ITantraApp.instance.database.messageDao(), ITantraApp.instance.database.conversationDao())
 
     // Settings State
     val callsign = MutableStateFlow("CORE-ALPHA")
+    val receiverDepartment = MutableStateFlow("GLOBAL") // GLOBAL, NDRF, POLICE, FIRE
     val selectedLanguage = MutableStateFlow(Language.HINDI)
     val isWalkieTalkieMode = MutableStateFlow(true) // true = Walkie Talkie (PTT), false = Continuous Call (VAD)
     val isReadBackEnabled = MutableStateFlow(false)
@@ -121,7 +127,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val readBackPendingText = MutableStateFlow<String?>(null)
     val isProcessingStt = MutableStateFlow(false)
 
-    val messages = database.messageDao().getAllMessages()
+    val messages = messageRepository.getAllMessages()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // SOS hold state
@@ -136,7 +142,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lastReductionPercent = MutableStateFlow(0f)
     private var trackMeJob: Job? = null
 
-    val sosHistory: StateFlow<List<org.coresense.itantra.storage.MessageEntity>> = database.messageDao().getAllMessages()
+    val sosHistory: StateFlow<List<org.coresense.itantra.storage.MessageEntity>> = messageRepository.getAllMessages()
         .map { list -> list.filter { it.priority == "SOS" || it.priority == "URGENT" } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -165,7 +171,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             reliabilityEngine.messageDeliveryUpdates.collect { (msgId, state) ->
                 val rtt = (state as? DeliveryState.Delivered)?.rttMs ?: 0L
-                database.messageDao().updateDeliveryState(msgId, state.name, rtt)
+                messageRepository.updateDeliveryState(msgId, state.name, rtt)
             }
         }
 
@@ -213,7 +219,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startDiscovery() {
-        activeTransport.startDiscovery()
+        val res = activeTransport.startDiscovery()
+        if (res.isFailure) {
+            connectionState.value = ConnectionState.Failed(res.exceptionOrNull()?.message ?: "Unknown error")
+        }
     }
 
     fun stopDiscovery() {
@@ -221,7 +230,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connectToPeer(peer: PeerDevice) {
-        activeTransport.connect(peer)
+        val res = activeTransport.connect(peer)
+        if (res.isFailure) {
+            connectionState.value = ConnectionState.Failed(res.exceptionOrNull()?.message ?: "Unknown error")
+        }
     }
 
     fun disconnectPeer() {
@@ -289,73 +301,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         liveTranscript.value = ""
     }
 
+    private var speechRecognizer: android.speech.SpeechRecognizer? = null
+
     fun onPttPressed() {
         if (!isWalkieTalkieMode.value) return
         activePipelineStage.value = "MIC"
-        pttAudioBuffer.clear()
         liveTranscript.value = "Listening..."
         TransmissionService.start(context, "Walkie-Talkie Transmitting")
-        audioRecorder.start(viewModelScope)
 
-        audioCaptureJob?.cancel()
-        audioCaptureJob = viewModelScope.launch(Dispatchers.Default) {
-            audioRecorder.audioFrames.collect { frame ->
-                for (s in frame) pttAudioBuffer.add(s)
-                if (vadDetector.processFrame(frame) is VadEvent.SpeechStarted) {
-                    activePipelineStage.value = "VAD"
-                }
+        // Ensure we are on main thread for SpeechRecognizer
+        viewModelScope.launch(Dispatchers.Main) {
+            if (speechRecognizer == null) {
+                speechRecognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
             }
+            val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, selectedLanguage.value.bcp47)
+                putExtra(android.speech.RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            }
+
+            speechRecognizer?.setRecognitionListener(object : android.speech.RecognitionListener {
+                override fun onReadyForSpeech(params: android.os.Bundle?) {}
+                override fun onBeginningOfSpeech() { activePipelineStage.value = "VAD" }
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() { activePipelineStage.value = "STT" }
+                override fun onError(error: Int) {
+                    liveTranscript.value = "Error: $error"
+                    activePipelineStage.value = "IDLE"
+                }
+                override fun onResults(results: android.os.Bundle?) {
+                    val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+                    val recognized = matches?.firstOrNull()?.trim() ?: ""
+                    
+                    if (recognized.isNotBlank()) {
+                        liveTranscript.value = recognized
+                        activePipelineStage.value = "CLASSIFY"
+                        if (isReadBackEnabled.value) {
+                            readBackPendingText.value = recognized
+                            viewModelScope.launch {
+                                ttsEngine.speak(recognized, selectedLanguage.value)
+                            }
+                        } else {
+                            sendTextMessage(recognized, PacketPriority.NORMAL)
+                        }
+                    } else {
+                        liveTranscript.value = "No clear speech recognized."
+                        activePipelineStage.value = "IDLE"
+                    }
+                }
+                override fun onPartialResults(partialResults: android.os.Bundle?) {}
+                override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+            })
+            speechRecognizer?.startListening(intent)
         }
     }
 
     fun onPttReleased() {
         if (!isWalkieTalkieMode.value) return
-        audioCaptureJob?.cancel()
-        audioCaptureJob = null
-        audioRecorder.stop()
+        viewModelScope.launch(Dispatchers.Main) {
+            speechRecognizer?.stopListening()
+        }
         TransmissionService.stop(context)
-
-        val captured = ShortArray(pttAudioBuffer.size) { pttAudioBuffer[it] }
-        pttAudioBuffer.clear()
-
-        if (captured.isEmpty()) {
-            liveTranscript.value = ""
-            activePipelineStage.value = "IDLE"
-            return
-        }
-
-        lastPcmBytesCaptured.value = captured.size * 2
-        isProcessingStt.value = true
-        activePipelineStage.value = "STT"
-        liveTranscript.value = "Processing STT..."
-
-        viewModelScope.launch(Dispatchers.IO) {
-            sttEngine.initialize(selectedLanguage.value)
-            val result = sttEngine.transcribe(captured)
-            isProcessingStt.value = false
-
-            if (result.isSuccess) {
-                val sttRes = result.getOrThrow()
-                val recognized = sttRes.text.trim()
-
-                if (recognized.isNotBlank()) {
-                    liveTranscript.value = recognized
-                    activePipelineStage.value = "CLASSIFY"
-                    if (isReadBackEnabled.value) {
-                        readBackPendingText.value = recognized
-                        ttsEngine.speak(recognized, selectedLanguage.value)
-                    } else {
-                        sendTextMessage(recognized, PacketPriority.NORMAL)
-                    }
-                } else {
-                    liveTranscript.value = "No clear speech recognized."
-                    activePipelineStage.value = "IDLE"
-                }
-            } else {
-                liveTranscript.value = "Error: ${result.exceptionOrNull()?.message}"
-                activePipelineStage.value = "IDLE"
-            }
-        }
     }
 
     fun confirmReadBackSend(editedText: String? = null) {
@@ -369,9 +376,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ttsEngine.stop()
     }
 
-    fun sendTextMessage(text: String, priority: PacketPriority = PacketPriority.NORMAL) {
+    fun sendTextMessage(
+        text: String,
+        priority: PacketPriority = PacketPriority.NORMAL,
+        receiverId: String? = null,
+        conversationId: String? = null
+    ) {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return // STRICT RULE: Never send blank or placeholder text
+
+        val myDeviceId = identityRepository.getDeviceId()
+        val localIdentity = identityRepository.userIdentity.value
+
+        val rawReceiver = if (receiverId.isNullOrBlank() || receiverId == "GLOBAL" || receiverId == "ALL") null else receiverId.trim()
+        val resolvedDept = resolveDepartmentId(rawReceiver)
+        val isDeptTarget = resolvedDept != null
+
+        // When sending to a department, receiverId is null (broadcast to department per Step 8)
+        val targetReceiver = if (isDeptTarget) null else rawReceiver
+        
+        // Department ID is either the target department or (if sent by a department device) the sender's department
+        val targetDeptId = resolvedDept ?: (if (localIdentity?.role == Role.DEPARTMENT) localIdentity.departmentId else null)
+
+        val convId = when {
+            !conversationId.isNullOrBlank() -> conversationId
+            resolvedDept != null -> getConversationId(myDeviceId, resolvedDept)
+            targetReceiver != null -> getConversationId(myDeviceId, targetReceiver)
+            else -> "conv_global"
+        }
 
         val gps = gpsState.value
         val latMicro = (gps as? GpsState.Fix)?.let { (it.latitude * 1_000_000).toInt() }
@@ -382,7 +414,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val packet = Packet(
             msgId = msgId,
-            senderId = callsign.value,
+            senderId = myDeviceId,
+            receiverId = targetReceiver,
+            departmentId = targetDeptId,
+            conversationId = convId,
             seq = seq,
             lang = selectedLanguage.value,
             priority = priority,
@@ -406,7 +441,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Save locally to Room DB
         viewModelScope.launch(Dispatchers.IO) {
-            database.messageDao().insertMessage(
+            val conv = ConversationEntity(
+                conversationId = convId,
+                localDeviceId = myDeviceId,
+                participantId = targetReceiver ?: resolvedDept,
+                departmentId = targetDeptId,
+                createdAt = packet.timestamp,
+                updatedAt = packet.timestamp
+            )
+            messageRepository.insertConversation(conv)
+
+            messageRepository.insertMessage(
                 MessageEntity(
                     msgId = packet.msgId,
                     senderId = packet.senderId,
@@ -414,6 +459,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     lang = packet.lang.displayName,
                     priority = packet.priority.name,
                     text = packet.text,
+                    receiverId = packet.receiverId,
+                    departmentId = packet.departmentId,
+                    conversationId = packet.conversationId,
                     timestamp = packet.timestamp,
                     latitudeMicrodegrees = packet.latitudeMicrodegrees,
                     longitudeMicrodegrees = packet.longitudeMicrodegrees,
@@ -501,10 +549,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleIncomingPacket(packet: Packet) {
         activePipelineStage.value = "RX"
+
+        val localIdentity = identityRepository.userIdentity.value
+        val myDeviceId = identityRepository.getDeviceId()
+
+        // 1. Ignore echo of our own outgoing packet
+        if (packet.senderId.equals(myDeviceId, ignoreCase = true)) {
+            return
+        }
+
+        // 2. Direct message check: specifically addressed to my deviceId
+        val isDirectForMe = packet.receiverId != null && packet.receiverId.equals(myDeviceId, ignoreCase = true)
+
+        // 3. Department request check
+        val targetDeptId = packet.departmentId ?: resolveDepartmentId(packet.receiverId)
+        val isDepartmentMessage = targetDeptId != null
+
+        // Department device routing rule (Step 8 Requirement 4 & Safety Rule):
+        // A department device accepts a department-addressed packet ONLY when:
+        // packet.departmentId == localDepartmentId AND local identity role == DEPARTMENT.
+        // Persistent IdentityRepository identity is authoritative. UI selectors NEVER affect routing.
+        val isForMyDepartment = if (isDepartmentMessage && targetDeptId != null) {
+            val isDeptRole = localIdentity?.role == Role.DEPARTMENT
+            val localDeptId = localIdentity?.departmentId
+            isDeptRole && localDeptId != null && (
+                localDeptId.equals(targetDeptId, ignoreCase = true) ||
+                (targetDeptId == "FIRE" && localDeptId.equals("FIRE_DISASTER", ignoreCase = true)) ||
+                (targetDeptId == "FIRE_DISASTER" && localDeptId.equals("FIRE", ignoreCase = true)) ||
+                (targetDeptId == "CIVIL" && localDeptId.equals("CIVIL_DEFENCE", ignoreCase = true)) ||
+                (targetDeptId == "CIVIL_DEFENCE" && localDeptId.equals("CIVIL", ignoreCase = true))
+            )
+        } else {
+            false
+        }
+
+        // 4. Global broadcast check: only for general broadcast messages not addressed to a department
+        val isGlobalBroadcast = (packet.receiverId == null || packet.receiverId.equals("GLOBAL", ignoreCase = true)) && !isDepartmentMessage
+
+        val isAccepted = isDirectForMe || isForMyDepartment || isGlobalBroadcast
+
+        if (!isAccepted) {
+            // STRICT RULE: Do NOT store or display packets addressed to another device or department
+            return
+        }
+
+        val convId = when {
+            !packet.conversationId.isNullOrBlank() -> packet.conversationId
+            targetDeptId != null -> getConversationId(packet.senderId, targetDeptId)
+            else -> getConversationId(myDeviceId, packet.senderId)
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             activePipelineStage.value = "DECODE"
+
+            // Save or update Conversation
+            val conv = ConversationEntity(
+                conversationId = convId,
+                localDeviceId = myDeviceId,
+                participantId = packet.senderId,
+                departmentId = targetDeptId,
+                createdAt = packet.timestamp,
+                updatedAt = packet.timestamp
+            )
+            messageRepository.insertConversation(conv)
+
             // Save to Room DB
-            database.messageDao().insertMessage(
+            messageRepository.insertMessage(
                 MessageEntity(
                     msgId = packet.msgId,
                     senderId = packet.senderId,
@@ -512,6 +622,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     lang = packet.lang.displayName,
                     priority = packet.priority.name,
                     text = packet.text,
+                    receiverId = packet.receiverId,
+                    departmentId = targetDeptId,
+                    conversationId = convId,
                     timestamp = packet.timestamp,
                     latitudeMicrodegrees = packet.latitudeMicrodegrees,
                     longitudeMicrodegrees = packet.longitudeMicrodegrees,
@@ -519,6 +632,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isIncoming = true
                 )
             )
+
+            showNotification(packet)
 
             // Play voice or trigger SOS alert
             activePipelineStage.value = "TTS"
@@ -529,6 +644,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ttsEngine.speak(packet.text, packet.lang)
             }
         }
+    }
+
+    fun getConversationId(target: String): String {
+        return getConversationId(identityRepository.getDeviceId(), target)
+    }
+
+    fun resolveDepartmentId(nameOrId: String?): String? {
+        if (nameOrId == null) return null
+        val clean = nameOrId.trim()
+        return when {
+            clean.contains("NDRF", ignoreCase = true) -> "NDRF"
+            clean.contains("Medic", ignoreCase = true) -> "MEDICAL"
+            clean.contains("Police", ignoreCase = true) -> "POLICE"
+            clean.contains("Fire", ignoreCase = true) || clean.contains("Disaster", ignoreCase = true) -> "FIRE"
+            clean.contains("Railway", ignoreCase = true) -> "RAILWAY"
+            clean.contains("Civil", ignoreCase = true) -> "CIVIL"
+            Department.entries.any { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) } -> {
+                Department.entries.first { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) }.id
+            }
+            else -> null
+        }
+    }
+
+    fun isDepartment(nameOrId: String?): Boolean = resolveDepartmentId(nameOrId) != null
+
+    companion object {
+        fun getConversationId(partyA: String, partyB: String): String {
+            val a = partyA.trim()
+            val b = partyB.trim()
+            val sorted = listOf(a, b).sorted()
+            return "conv_${sorted[0]}_${sorted[1]}"
+        }
+    }
+
+    private fun showNotification(packet: Packet) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                "itantra_msgs",
+                "Messages",
+                android.app.NotificationManager.IMPORTANCE_HIGH
+            )
+            notificationManager.createNotificationChannel(channel)
+        }
+        val builder = androidx.core.app.NotificationCompat.Builder(context, "itantra_msgs")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(if (packet.priority == PacketPriority.SOS) "SOS EMERGENCY!" else "Message from ${packet.senderId}")
+            .setContentText(packet.text)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+
+        notificationManager.notify(packet.msgId.toInt(), builder.build())
     }
 
     fun runBenchmark() {
