@@ -78,12 +78,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setAppLanguage(lang: Language) {
         selectedLanguage.value = lang
+        liveTranscript.value = "${lang.displayName} STT [Model Unavailable]"
         viewModelScope.launch(Dispatchers.IO) {
             val res = sttEngine.initialize(lang)
             if (res.isFailure) {
                 val err = res.exceptionOrNull()?.message ?: "Failed to load model"
                 android.util.Log.e("MainViewModel", "STT init failed for ${lang.displayName}: $err")
-                liveTranscript.value = err
+                liveTranscript.value = "${lang.displayName} STT [Model Unavailable]"
             } else {
                 android.util.Log.i("MainViewModel", "STT initialized successfully for ${lang.displayName}")
                 liveTranscript.value = "${lang.displayName} STT [Ready]"
@@ -170,7 +171,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             modelRegistry.refresh()
             val res = sttEngine.initialize(selectedLanguage.value)
             if (res.isSuccess) {
-                android.util.Log.i("MainViewModel", "Initial STT model loaded: ${selectedLanguage.value.displayName}")
+                try { android.util.Log.i("MainViewModel", "Initial STT model loaded: ${selectedLanguage.value.displayName}") } catch (_: Throwable) {}
+                liveTranscript.value = "${selectedLanguage.value.displayName} STT [Ready]"
+            } else {
+                liveTranscript.value = "${selectedLanguage.value.displayName} STT [Model Unavailable]"
             }
         }
 

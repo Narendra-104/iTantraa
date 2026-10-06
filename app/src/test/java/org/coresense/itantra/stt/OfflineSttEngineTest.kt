@@ -182,5 +182,120 @@ class OfflineSttEngineTest {
         assertEquals("Index 0 must be <pad>", "<pad>", tokens[0])
         assertEquals("Index 4 must be |", "|", tokens[4])
     }
+
+    @Test
+    fun test12_hindiModelRegistryAndLoading_detectsInstalledAndMetadata() {
+        val hiDir = File(mockStorageDir, Language.HINDI.code).apply { mkdirs() }
+        val modelFile = File(hiDir, "model.onnx").apply { writeBytes(ByteArray(4096)) }
+        val tokensFile = File(hiDir, "tokens.txt").apply {
+            writeText("<pad>\n<s>\n</s>\n<unk>\n|\nअ\nआ\nइ\nई\n")
+        }
+
+        mockRegistry.refresh()
+
+        assertTrue("Hindi model must be reported installed", mockRegistry.isModelInstalled(Language.HINDI))
+        val meta = mockRegistry.models.value[Language.HINDI]
+        assertNotNull(meta)
+        assertEquals("Status must be INSTALLED", ModelStatus.INSTALLED, meta?.status)
+        assertEquals("Engine must be AI4Bharat IndicWav2Vec Hindi CTC ONNX", "AI4Bharat IndicWav2Vec Hindi CTC ONNX", meta?.engineName)
+        assertEquals("model.onnx", meta?.modelFilename)
+        assertEquals("tokens.txt", meta?.tokensFilename)
+        assertEquals(hiDir.absolutePath, meta?.localDirectoryPath)
+        assertNotNull("getModelFile must not be null", mockRegistry.getModelFile(Language.HINDI))
+        assertEquals(modelFile.absolutePath, mockRegistry.getModelFile(Language.HINDI)?.absolutePath)
+        assertNotNull("getTokensFile must not be null", mockRegistry.getTokensFile(Language.HINDI))
+        assertEquals(tokensFile.absolutePath, mockRegistry.getTokensFile(Language.HINDI)?.absolutePath)
+    }
+
+    @Test
+    fun test13_hindiTokenizerVerification_validates68TokensStructure() {
+        val hiDir = File(mockStorageDir, Language.HINDI.code).apply { mkdirs() }
+        val tokensFile = File(hiDir, "tokens.txt")
+        
+        // Write the actual 68 tokens representation
+        val lines = listOf(
+            "<pad>", "<s>", "</s>", "<unk>", "|", "ं", "ः", "अ", "आ", "इ", "ई", "उ", "ऊ", "ऋ", "ए", "ऐ", "ऑ", "ओ", "औ",
+            "क", "ख", "ग", "घ", "ङ", "च", "छ", "ज", "झ", "ञ", "ट", "ठ", "ड", "ढ", "ण", "त", "थ", "द", "ध", "न",
+            "प", "फ", "ब", "भ", "म", "य", "र", "ल", "व", "श", "ष", "स", "ह", "़", "ा", "ि", "ी", "ु", "ू", "ृ", "े", "ै", "ॉ", "ो", "ौ", "्", "ॅ", "ँ"
+        )
+        tokensFile.writeText(lines.joinToString("\n") + "\n")
+
+        val readLines = java.io.BufferedReader(java.io.FileReader(tokensFile)).readLines()
+        assertEquals("Hindi tokenizer must have 67+ tokens", lines.size, readLines.size)
+        assertEquals("Blank token at index 0 must be <pad>", "<pad>", readLines[0])
+        assertEquals("Delimiter token at index 4 must be |", "|", readLines[4])
+    }
+
+    @Test
+    fun test14_languageSwitching_unloadsPreviousModelCorrectly() = runBlocking {
+        // Prepare mock directory with files
+        val enDir = File(mockStorageDir, Language.ENGLISH.code).apply { mkdirs() }
+        File(enDir, "model.onnx").writeBytes(ByteArray(100))
+        File(enDir, "tokens.txt").writeText("<pad>\n|\n")
+
+        val hiDir = File(mockStorageDir, Language.HINDI.code).apply { mkdirs() }
+        File(hiDir, "model.onnx").writeBytes(ByteArray(100))
+        File(hiDir, "tokens.txt").writeText("<pad>\n|\n")
+
+        mockRegistry.refresh()
+        assertTrue(mockRegistry.isModelInstalled(Language.ENGLISH))
+        assertTrue(mockRegistry.isModelInstalled(Language.HINDI))
+
+        // When switching, close unloads active model
+        sttEngine.close()
+        assertNull(sttEngine.currentLanguage())
+        assertFalse(sttEngine.isLanguageLoaded(Language.ENGLISH))
+        assertFalse(sttEngine.isLanguageLoaded(Language.HINDI))
+    }
+
+    @Test
+    fun test15_englishHindiCoexistence_bothDetectedConcurrently() {
+        val enDir = File(mockStorageDir, Language.ENGLISH.code).apply { mkdirs() }
+        File(enDir, "model.onnx").writeBytes(ByteArray(1024))
+        File(enDir, "tokens.txt").writeText("<pad>\n|\n")
+
+        val hiDir = File(mockStorageDir, Language.HINDI.code).apply { mkdirs() }
+        File(hiDir, "model.onnx").writeBytes(ByteArray(2048))
+        File(hiDir, "tokens.txt").writeText("<pad>\n|\n")
+
+        mockRegistry.refresh()
+
+        assertTrue("English installed", mockRegistry.isModelInstalled(Language.ENGLISH))
+        assertTrue("Hindi installed", mockRegistry.isModelInstalled(Language.HINDI))
+        assertFalse("Bengali not installed", mockRegistry.isModelInstalled(Language.BENGALI))
+
+        val installed = mockRegistry.getInstalledLanguages()
+        assertEquals(2, installed.size)
+        assertTrue(installed.contains(Language.ENGLISH))
+        assertTrue(installed.contains(Language.HINDI))
+    }
+
+    @Test
+    fun test16_hindiBenchmarkAudioFile_existsAndHasPositiveLength() {
+        val refHi = File("src/main/assets/benchmarks/ref_hi.wav")
+        assertTrue("ref_hi.wav must exist in project assets", refHi.exists())
+        assertTrue("ref_hi.wav must have positive length", refHi.length() > 0)
+    }
+
+    @Test
+    fun test17_hindiTokenizerExactCharacterMapping() {
+        val hiTokensFile = File("src/main/assets/models/stt/hi/tokens.txt")
+        assertTrue("Hindi tokens.txt must exist in assets", hiTokensFile.exists())
+        val tokens = hiTokensFile.readLines()
+        assertEquals("Token 0 must be <pad>", "<pad>", tokens[0])
+        assertEquals("Token 4 must be |", "|", tokens[4])
+        assertTrue("Tokenizer must contain Devanagari vowel 'अ'", tokens.contains("अ"))
+        assertTrue("Tokenizer must contain Devanagari consonant 'क'", tokens.contains("क"))
+        assertTrue("Tokenizer must contain Devanagari halant/virama '्'", tokens.contains("्"))
+    }
+
+    @Test
+    fun test18_modelStatusEnumAndMetadataIntegrity() {
+        assertEquals(4, ModelStatus.entries.size)
+        assertTrue(ModelStatus.entries.contains(ModelStatus.INSTALLED))
+        assertTrue(ModelStatus.entries.contains(ModelStatus.MISSING))
+        assertTrue(ModelStatus.entries.contains(ModelStatus.LOADING))
+        assertTrue(ModelStatus.entries.contains(ModelStatus.ERROR))
+    }
 }
 

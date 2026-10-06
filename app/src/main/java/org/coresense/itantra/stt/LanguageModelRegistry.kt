@@ -62,7 +62,7 @@ open class LanguageModelRegistry(
             }
 
             val defaultSizeMb = when (lang) {
-                Language.HINDI -> 78.5f
+                Language.HINDI -> 302.7f
                 Language.ENGLISH -> 116.3f
                 Language.BENGALI -> 82.0f
                 Language.TAMIL -> 85.0f
@@ -76,7 +76,11 @@ open class LanguageModelRegistry(
             }
 
             val engine = if (isNeuralInstalled) {
-                if (lang == Language.ENGLISH) "Wav2Vec2-Base-960h CTC ONNX" else "AI4Bharat IndicConformer ONNX"
+                when (lang) {
+                    Language.ENGLISH -> "Wav2Vec2-Base-960h CTC ONNX"
+                    Language.HINDI -> "AI4Bharat IndicWav2Vec Hindi CTC ONNX"
+                    else -> "AI4Bharat IndicConformer ONNX"
+                }
             } else {
                 "Offline Model Unavailable (${lang.displayName})"
             }
