@@ -37,6 +37,7 @@ fun SettingsScreen(
     val callsign by viewModel.callsign.collectAsState()
     val activeTransport by viewModel.currentTransportType.collectAsState()
     val discoveredPeers by viewModel.discoveredPeers.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
     val modelsMap by viewModel.modelRegistry.models.collectAsState()
     val isReadBack by viewModel.isReadBackEnabled.collectAsState()
     val vadSensitivity by viewModel.vadSensitivity.collectAsState()
@@ -223,6 +224,7 @@ fun SettingsScreen(
             }
         } else {
             items(discoveredPeers) { peer ->
+                val isThisConnected = (connectionState as? org.coresense.itantra.link.ConnectionState.Connected)?.peer?.id == peer.id
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -233,20 +235,44 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(text = peer.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                             Text(text = "${peer.address} • ${peer.transportType.displayName}", fontSize = 10.sp, color = Color.LightGray)
                         }
                         Button(
-                            onClick = { viewModel.connectToPeer(peer) },
-                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonGreen),
+                            onClick = {
+                                if (isThisConnected) {
+                                    viewModel.disconnectPeer()
+                                } else {
+                                    viewModel.connectToPeer(peer)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isThisConnected) Color(0xFF008800) else PrimaryNeonGreen
+                            ),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                         ) {
-                            Text("Connect", color = DarkSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (isThisConnected) "Connected" else "Connect",
+                                color = if (isThisConnected) Color.White else DarkSurface,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
+            }
+            if (connectionState is org.coresense.itantra.link.ConnectionState.Failed) {
+                item {
+                    Text(
+                        text = "Connection Error: ${(connectionState as org.coresense.itantra.link.ConnectionState.Failed).reason}",
+                        color = Color.Red,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
             }
             item { Spacer(modifier = Modifier.height(10.dp)) }
         }

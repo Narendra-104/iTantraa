@@ -95,7 +95,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Transports
     val bluetoothTransport = BluetoothTransport(context, viewModelScope)
     val wifiDirectTransport = WifiDirectTransport(context, viewModelScope)
-    val lanUdpTransport = LanUdpTransport(viewModelScope)
+    val lanUdpTransport = LanUdpTransport(viewModelScope, context)
 
     val currentTransportType = MutableStateFlow(TransportType.BLUETOOTH_RFCOMM)
     private var activeTransport: LinkTransport = bluetoothTransport
@@ -160,20 +160,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Sync transport flows
         observeActiveTransport()
 
-        // Sync incoming packets from reliability engine
-        viewModelScope.launch {
-            reliabilityEngine.receivedPackets.collect { packet ->
-                handleIncomingPacket(packet)
-            }
-        }
-
-        // Sync delivery state updates into Room
-        viewModelScope.launch {
-            reliabilityEngine.messageDeliveryUpdates.collect { (msgId, state) ->
-                val rtt = (state as? DeliveryState.Delivered)?.rttMs ?: 0L
-                messageRepository.updateDeliveryState(msgId, state.name, rtt)
-            }
-        }
+        // Sync incoming packets and delivery updates from reliability engine
+        observeReliabilityEngine()
 
         // Update facilities when GPS state changes
         viewModelScope.launch {
@@ -193,6 +181,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private var enginePacketJob: Job? = null
+    private var engineDeliveryJob: Job? = null
+
+    private fun observeReliabilityEngine() {
+        enginePacketJob?.cancel()
+        enginePacketJob = viewModelScope.launch {
+            reliabilityEngine.receivedPackets.collect { packet ->
+                handleIncomingPacket(packet)
+            }
+        }
+
+        engineDeliveryJob?.cancel()
+        engineDeliveryJob = viewModelScope.launch {
+            reliabilityEngine.messageDeliveryUpdates.collect { (msgId, state) ->
+                val rtt = (state as? DeliveryState.Delivered)?.rttMs ?: 0L
+                messageRepository.updateDeliveryState(msgId, state.name, rtt)
+            }
+        }
+    }
+
     fun setTransport(type: TransportType) {
         if (currentTransportType.value == type) return
         activeTransport.disconnect()
@@ -207,13 +215,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         reliabilityEngine.close()
         reliabilityEngine = ReliabilityEngine(activeTransport, viewModelScope, callsign.value)
         observeActiveTransport()
+        observeReliabilityEngine()
     }
 
+    private var transportConnectionJob: Job? = null
+    private var transportPeersJob: Job? = null
+
     private fun observeActiveTransport() {
-        viewModelScope.launch {
+        transportConnectionJob?.cancel()
+        transportConnectionJob = viewModelScope.launch {
             activeTransport.connectionState.collect { connectionState.value = it }
         }
-        viewModelScope.launch {
+        transportPeersJob?.cancel()
+        transportPeersJob = viewModelScope.launch {
             activeTransport.discoveredPeers.collect { discoveredPeers.value = it }
         }
     }
