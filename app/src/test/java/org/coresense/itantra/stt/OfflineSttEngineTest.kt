@@ -152,4 +152,35 @@ class OfflineSttEngineTest {
         assertEquals(1000L, result.audioDurationMs)
         assertEquals(0.12f, result.rtf, 0.001f)
     }
+
+    @Test
+    fun test11_englishModelRegistryAndLoading_doesNotReportUnavailableWhenFilesPresent() {
+        val enDir = File(mockStorageDir, Language.ENGLISH.code).apply { mkdirs() }
+        val modelFile = File(enDir, "model.onnx").apply { writeBytes(ByteArray(2048)) }
+        val tokensFile = File(enDir, "tokens.txt").apply {
+            writeText("<pad>\n<s>\n</s>\n<unk>\n|\nE\nT\nA\nO\nN\nI\nH\nS\nR\nD\nL\nU\nM\nW\nC\nF\nG\nY\nP\nB\nV\nK\n'\nX\nJ\nQ\nZ\n")
+        }
+
+        mockRegistry.refresh()
+
+        assertTrue("English model must be reported installed", mockRegistry.isModelInstalled(Language.ENGLISH))
+        val meta = mockRegistry.models.value[Language.ENGLISH]
+        assertNotNull(meta)
+        assertEquals("Status must be INSTALLED", ModelStatus.INSTALLED, meta?.status)
+        assertEquals("Engine must be Wav2Vec2-Base-960h CTC ONNX", "Wav2Vec2-Base-960h CTC ONNX", meta?.engineName)
+        assertEquals("model.onnx", meta?.modelFilename)
+        assertEquals("tokens.txt", meta?.tokensFilename)
+        assertEquals(enDir.absolutePath, meta?.localDirectoryPath)
+        assertNotNull("getModelFile must not be null", mockRegistry.getModelFile(Language.ENGLISH))
+        assertEquals(modelFile.absolutePath, mockRegistry.getModelFile(Language.ENGLISH)?.absolutePath)
+        assertNotNull("getTokensFile must not be null", mockRegistry.getTokensFile(Language.ENGLISH))
+        assertEquals(tokensFile.absolutePath, mockRegistry.getTokensFile(Language.ENGLISH)?.absolutePath)
+
+        // Verify tokens count and critical indices
+        val tokens = java.io.BufferedReader(java.io.FileReader(tokensFile)).readLines()
+        assertEquals("Token count must be 32", 32, tokens.size)
+        assertEquals("Index 0 must be <pad>", "<pad>", tokens[0])
+        assertEquals("Index 4 must be |", "|", tokens[4])
+    }
 }
+

@@ -74,17 +74,19 @@ class OfflineSttEngine(
                 this@OfflineSttEngine.tokensList = tokens
                 this@OfflineSttEngine.currentLang = lang
 
+                try { android.util.Log.i("OfflineSttEngine", "Successfully loaded ASR model for ${lang.displayName} (${modelFile.length()} bytes, tokens: ${tokens.size})") } catch (_: Throwable) {}
                 Result.success(Unit)
             } catch (e: Exception) {
                 close()
+                try { android.util.Log.e("OfflineSttEngine", "Failed to load ONNX model for ${lang.displayName} from ${modelFile.absolutePath}: ${e.message}", e) } catch (_: Throwable) {}
                 Result.failure(IllegalStateException("FAILED_TO_LOAD_MODEL: ${e.message}", e))
             }
         }
 
         this@OfflineSttEngine.currentLang = lang
-        Result.failure(
-            IllegalStateException("STT_MODEL_UNAVAILABLE: No offline ASR model installed for ${lang.displayName} (${lang.code})")
-        )
+        val msg = "STT_MODEL_UNAVAILABLE: No offline ASR model installed for ${lang.displayName} (${lang.code})"
+        try { android.util.Log.w("OfflineSttEngine", msg) } catch (_: Throwable) {}
+        Result.failure(IllegalStateException(msg))
     }
 
     override suspend fun transcribe(pcm16: ShortArray): Result<SttResult> = withContext(Dispatchers.IO) {

@@ -109,52 +109,90 @@ open class LanguageModelRegistry(
             if (!customBaseDir.exists()) customBaseDir.mkdirs()
             return customBaseDir
         }
-        val ext = context.getExternalFilesDir("models/stt")
-        if (ext != null && ext.exists()) return ext
         val internal = File(context.filesDir, "models/stt")
         if (!internal.exists()) internal.mkdirs()
         return internal
     }
 
     fun getModelFile(lang: Language): File? {
-        val dir = File(getModelsStorageDirectory(), lang.code)
+        val rootDir = getModelsStorageDirectory()
+        val dir = File(rootDir, lang.code)
         val file = File(dir, "model.onnx")
-        return if (file.exists() && file.length() > 0) file else null
+        if (file.exists() && file.length() > 0) return file
+
+        // Fallback to external files dir if side-loaded there
+        if (customBaseDir == null) {
+            try {
+                val ext = context.getExternalFilesDir("models/stt")
+                if (ext != null) {
+                    val extFile = File(File(ext, lang.code), "model.onnx")
+                    if (extFile.exists() && extFile.length() > 0) return extFile
+                }
+            } catch (_: Exception) {}
+        }
+        return null
     }
 
     fun getTokensFile(lang: Language): File? {
-        val dir = File(getModelsStorageDirectory(), lang.code)
+        val rootDir = getModelsStorageDirectory()
+        val dir = File(rootDir, lang.code)
         val file = File(dir, "tokens.txt")
-        return if (file.exists() && file.length() > 0) file else null
+        if (file.exists() && file.length() > 0) return file
+
+        if (customBaseDir == null) {
+            try {
+                val ext = context.getExternalFilesDir("models/stt")
+                if (ext != null) {
+                    val extFile = File(File(ext, lang.code), "tokens.txt")
+                    if (extFile.exists() && extFile.length() > 0) return extFile
+                }
+            } catch (_: Exception) {}
+        }
+        return null
     }
 
-    private fun extractBundledAssetsIfPresent(rootDir: File) {
+    fun extractBundledAssetsIfPresent(rootDir: File = getModelsStorageDirectory()) {
         if (customBaseDir != null) return // Never extract into test mock directories
-        try {
-            val assetList = context.assets.list("models/stt/en") ?: return
-            if (assetList.contains("model.onnx")) {
-                val enDir = File(rootDir, Language.ENGLISH.code)
-                if (!enDir.exists()) enDir.mkdirs()
-                val targetModel = File(enDir, "model.onnx")
-                val targetTokens = File(enDir, "tokens.txt")
+        for (lang in Language.entries) {
+            val assetModelPath = "models/stt/${lang.code}/model.onnx"
+            val assetTokensPath = "models/stt/${lang.code}/tokens.txt"
 
-                if (!targetModel.exists() || targetModel.length() == 0L) {
-                    context.assets.open("models/stt/en/model.onnx").use { input ->
+            val langDir = File(rootDir, lang.code)
+            val targetModel = File(langDir, "model.onnx")
+            val targetTokens = File(langDir, "tokens.txt")
+
+            try {
+                // Directly check asset presence by attempting to open stream
+                context.assets.open(assetModelPath).use { assetStream ->
+                    if (!langDir.exists()) langDir.mkdirs()
+
+                    // Do not re-extract if file already exists with content
+                    if (!targetModel.exists() || targetModel.length() == 0L) {
+                        try { android.util.Log.i("LanguageModelRegistry", "Extracting asset $assetModelPath to ${targetModel.absolutePath}") } catch (_: Throwable) {}
                         targetModel.outputStream().use { output ->
-                            input.copyTo(output)
+                            assetStream.copyTo(output)
                         }
+                        try { android.util.Log.i("LanguageModelRegistry", "Successfully extracted model.onnx (${targetModel.length()} bytes)") } catch (_: Throwable) {}
                     }
                 }
-                if (assetList.contains("tokens.txt") && (!targetTokens.exists() || targetTokens.length() == 0L)) {
-                    context.assets.open("models/stt/en/tokens.txt").use { input ->
-                        targetTokens.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                }
+            } catch (_: Exception) {
+                // Asset not present for this language
             }
-        } catch (_: Exception) {
-            // Graceful fallback for mock context or missing assets
+
+            try {
+                context.assets.open(assetTokensPath).use { assetTokensStream ->
+                    if (!langDir.exists()) langDir.mkdirs()
+                    if (!targetTokens.exists() || targetTokens.length() == 0L) {
+                        try { android.util.Log.i("LanguageModelRegistry", "Extracting asset $assetTokensPath to ${targetTokens.absolutePath}") } catch (_: Throwable) {}
+                        targetTokens.outputStream().use { output ->
+                            assetTokensStream.copyTo(output)
+                        }
+                        try { android.util.Log.i("LanguageModelRegistry", "Successfully extracted tokens.txt (${targetTokens.length()} bytes)") } catch (_: Throwable) {}
+                    }
+                }
+            } catch (_: Exception) {
+                // Tokens asset not present
+            }
         }
     }
 }

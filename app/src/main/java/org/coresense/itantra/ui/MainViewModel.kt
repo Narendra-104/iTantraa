@@ -79,7 +79,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setAppLanguage(lang: Language) {
         selectedLanguage.value = lang
         viewModelScope.launch(Dispatchers.IO) {
-            sttEngine.initialize(lang)
+            val res = sttEngine.initialize(lang)
+            if (res.isFailure) {
+                val err = res.exceptionOrNull()?.message ?: "Failed to load model"
+                android.util.Log.e("MainViewModel", "STT init failed for ${lang.displayName}: $err")
+                liveTranscript.value = err
+            } else {
+                android.util.Log.i("MainViewModel", "STT initialized successfully for ${lang.displayName}")
+                liveTranscript.value = "${lang.displayName} STT [Ready]"
+            }
         }
     }
 
@@ -156,6 +164,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Auto-load Silero VAD ONNX model from assets
         vadDetector.loadFromAssets(context)
+
+        // Initialize STT engine: extract bundled models and load active language
+        viewModelScope.launch(Dispatchers.IO) {
+            modelRegistry.refresh()
+            val res = sttEngine.initialize(selectedLanguage.value)
+            if (res.isSuccess) {
+                android.util.Log.i("MainViewModel", "Initial STT model loaded: ${selectedLanguage.value.displayName}")
+            }
+        }
 
         // Initialize GPS location
         gpsProvider.requestLocation()
@@ -376,7 +393,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         liveTranscript.value = "Transcribing..."
 
         viewModelScope.launch(Dispatchers.IO) {
-            sttEngine.initialize(selectedLanguage.value)
+            val initRes = sttEngine.initialize(selectedLanguage.value)
+            if (initRes.isFailure) {
+                isProcessingStt.value = false
+                val errorMsg = initRes.exceptionOrNull()?.message ?: "STT Model Unavailable"
+                liveTranscript.value = errorMsg
+                activePipelineStage.value = "IDLE"
+                return@launch
+            }
             val sttRes = sttEngine.transcribe(capturedSamples)
             isProcessingStt.value = false
 
