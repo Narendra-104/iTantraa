@@ -33,6 +33,7 @@ fun LanguageScreen(
 ) {
     val currentLang by viewModel.selectedLanguage.collectAsState()
     val strings = remember(currentLang) { AppLocalization.getStrings(currentLang) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(
         modifier = modifier
@@ -75,18 +76,30 @@ fun LanguageScreen(
                             ) {
                                 rowLangs.forEach { lang ->
                                     val isSelected = currentLang == lang
+                                    val isInstalled = viewModel.modelRegistry.isModelInstalled(lang)
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clip(RoundedCornerShape(8.dp))
-                                            .background(if (isSelected) PrimaryNeonGreen.copy(alpha = 0.2f) else DarkSurfaceVariant)
+                                            .background(
+                                                when {
+                                                    isSelected -> PrimaryNeonGreen.copy(alpha = 0.2f)
+                                                    isInstalled -> DarkSurfaceVariant
+                                                    else -> DarkSurfaceVariant.copy(alpha = 0.5f)
+                                                }
+                                            )
                                             .border(
                                                 1.dp,
                                                 if (isSelected) PrimaryNeonGreen else Color.Transparent,
                                                 RoundedCornerShape(8.dp)
                                             )
                                             .clickable {
-                                                viewModel.setAppLanguage(lang)
+                                                if (isInstalled) {
+                                                    viewModel.setAppLanguage(lang)
+                                                    statusMessage = null
+                                                } else {
+                                                    statusMessage = "${lang.displayName} model not installed. Pre-installed: English & Hindi. You can download ${lang.displayName} in Settings."
+                                                }
                                             }
                                             .padding(vertical = 12.dp, horizontal = 4.dp),
                                         contentAlignment = Alignment.Center
@@ -101,7 +114,7 @@ fun LanguageScreen(
                                                 Language.MARATHI -> "नमस्कार"
                                                 Language.GUJARATI -> "નમસ્તે"
                                                 Language.KANNADA -> "ನಮಸ್ಕಾರ"
-                                                Language.MALAYALAM -> "നമസ്കാരം"
+                                                Language.MALAYALAM -> "മലയാളം"
                                                 Language.PUNJABI -> "ਸਤਿ ਸ਼੍ਰੀ"
                                                 Language.ODIA -> "ନମସ୍କାର"
                                             }
@@ -109,14 +122,29 @@ fun LanguageScreen(
                                                 text = greeting,
                                                 fontSize = 14.sp,
                                                 fontWeight = FontWeight.ExtraBold,
-                                                color = if (isSelected) PrimaryNeonGreen else SecondaryTeal
+                                                color = when {
+                                                    isSelected -> PrimaryNeonGreen
+                                                    isInstalled -> SecondaryTeal
+                                                    else -> Color.Gray
+                                                }
                                             )
                                             Text(
                                                 text = "${lang.nativeName} (${lang.displayName})",
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Medium,
-                                                color = if (isSelected) Color.White else Color.LightGray
+                                                color = when {
+                                                    isSelected -> Color.White
+                                                    isInstalled -> Color.LightGray
+                                                    else -> Color.DarkGray
+                                                }
                                             )
+                                            if (!isInstalled) {
+                                                Text(
+                                                    text = "[Not Installed]",
+                                                    fontSize = 9.sp,
+                                                    color = Color(0xFFFFB300)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -128,6 +156,18 @@ fun LanguageScreen(
                     }
                 }
             }
+
+            if (statusMessage != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = statusMessage!!,
+                    color = Color(0xFFFFB300),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
             Button(
                 onClick = onNext,

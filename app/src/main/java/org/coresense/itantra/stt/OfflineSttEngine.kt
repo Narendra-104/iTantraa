@@ -23,6 +23,7 @@ import kotlin.math.sqrt
  * 3. Unloads previous model before loading new one to preserve memory.
  * 4. Explicitly returns STT_MODEL_UNAVAILABLE when no valid model file is present.
  * 5. Performs true neural ONNX inference and CTC decoding when model is present.
+ * 6. Smoke-tests inference at initialization to guarantee runtime operator compatibility.
  */
 class OfflineSttEngine(
     private val registry: LanguageModelRegistry
@@ -47,40 +48,35 @@ class OfflineSttEngine(
         // Unload previous model to free RAM
         close()
 
-        val modelFile = registry.getModelFile(lang)
-        if (modelFile != null && modelFile.exists() && modelFile.length() > 0) {
+        var modelFile = registry.getModelFile(lang)
+        if (modelFile == null || !modelFile.exists() || modelFile.length() == 0L) {
+            // Attempt clean extraction
+            registry.refresh()
+            modelFile = registry.getModelFile(lang)
+        }
+
+        if (modelFile != null && modelFile.exists() && modelFile.length() > 0L) {
             val tokensFile = registry.getTokensFile(lang)
-            return@withContext try {
-                val env = OrtEnvironment.getEnvironment()
-                val opts = OrtSession.SessionOptions().apply {
-                    setIntraOpNumThreads(2) // Optimal for mobile CPU inference
-                }
-                val session = env.createSession(modelFile.absolutePath, opts)
-
-                val tokens = if (tokensFile != null && tokensFile.exists()) {
-                    val list = ArrayList<String>()
-                    BufferedReader(FileReader(tokensFile)).use { br ->
-                        var line: String?
-                        while (br.readLine().also { line = it } != null) {
-                            val token = line!!.trim().split(Regex("\\s+")).firstOrNull() ?: ""
-                            list.add(token)
-                        }
-                    }
-                    list
-                } else emptyList()
-
-                this@OfflineSttEngine.ortEnv = env
-                this@OfflineSttEngine.ortSession = session
-                this@OfflineSttEngine.tokensList = tokens
-                this@OfflineSttEngine.currentLang = lang
-
-                try { android.util.Log.i("OfflineSttEngine", "Successfully loaded ASR model for ${lang.displayName} (${modelFile.length()} bytes, tokens: ${tokens.size})") } catch (_: Throwable) {}
-                Result.success(Unit)
-            } catch (e: Exception) {
-                close()
-                try { android.util.Log.e("OfflineSttEngine", "Failed to load ONNX model for ${lang.displayName} from ${modelFile.absolutePath}: ${e.message}", e) } catch (_: Throwable) {}
-                Result.failure(IllegalStateException("FAILED_TO_LOAD_MODEL: ${e.message}", e))
+            val loadResult = tryLoadSession(lang, modelFile, tokensFile)
+            if (loadResult.isSuccess) {
+                return@withContext loadResult
             }
+
+            // If loading failed (e.g. corrupt extraction from old version), try force re-extract once for bundled languages
+            if (registry.isBundled(lang)) {
+                try { android.util.Log.w("OfflineSttEngine", "Initial load failed for ${lang.displayName}, attempting re-extraction: ${loadResult.exceptionOrNull()?.message}") } catch (_: Throwable) {}
+                registry.forceReextract(lang)
+                val reextractedModel = registry.getModelFile(lang)
+                val reextractedTokens = registry.getTokensFile(lang)
+                if (reextractedModel != null && reextractedModel.exists()) {
+                    val retryResult = tryLoadSession(lang, reextractedModel, reextractedTokens)
+                    if (retryResult.isSuccess) {
+                        return@withContext retryResult
+                    }
+                    return@withContext retryResult
+                }
+            }
+            return@withContext loadResult
         }
 
         this@OfflineSttEngine.currentLang = lang
@@ -89,8 +85,54 @@ class OfflineSttEngine(
         Result.failure(IllegalStateException(msg))
     }
 
+    private fun tryLoadSession(lang: Language, modelFile: java.io.File, tokensFile: java.io.File?): Result<Unit> {
+        return try {
+            val env = OrtEnvironment.getEnvironment()
+            val opts = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(2) // Optimal for mobile CPU inference
+            }
+            val session = env.createSession(modelFile.absolutePath, opts)
+
+            val tokens = if (tokensFile != null && tokensFile.exists()) {
+                val list = ArrayList<String>()
+                BufferedReader(FileReader(tokensFile)).use { br ->
+                    var line: String?
+                    while (br.readLine().also { line = it } != null) {
+                        val trimmed = line!!.trim()
+                        if (trimmed.isNotEmpty()) {
+                            val token = trimmed.split(Regex("\\s+")).firstOrNull() ?: ""
+                            list.add(token)
+                        }
+                    }
+                }
+                list
+            } else emptyList()
+
+            // Verification smoke test: run 1600 samples (100 ms) of dummy waveform
+            val inputName = session.inputNames.iterator().next()
+            val testBuf = FloatBuffer.allocate(1600)
+            testBuf.rewind()
+            val testTensor = OnnxTensor.createTensor(env, testBuf, longArrayOf(1, 1600))
+            val testRun = session.run(mapOf(inputName to testTensor))
+            testTensor.close()
+            testRun.close()
+
+            this@OfflineSttEngine.ortEnv = env
+            this@OfflineSttEngine.ortSession = session
+            this@OfflineSttEngine.tokensList = tokens
+            this@OfflineSttEngine.currentLang = lang
+
+            try { android.util.Log.i("OfflineSttEngine", "Successfully loaded & verified ASR model for ${lang.displayName} (${modelFile.length()} bytes, tokens: ${tokens.size})") } catch (_: Throwable) {}
+            Result.success(Unit)
+        } catch (e: Exception) {
+            close()
+            try { android.util.Log.e("OfflineSttEngine", "Failed to load ONNX model for ${lang.displayName} from ${modelFile.absolutePath}: ${e.message}", e) } catch (_: Throwable) {}
+            Result.failure(IllegalStateException("MODEL_LOAD_ERROR: ${e.message}", e))
+        }
+    }
+
     override suspend fun transcribe(pcm16: ShortArray): Result<SttResult> = withContext(Dispatchers.IO) {
-        val lang = currentLang ?: Language.HINDI
+        val lang = currentLang ?: Language.ENGLISH
         if (pcm16.isEmpty()) {
             return@withContext Result.failure(IllegalArgumentException("Audio buffer is empty"))
         }
@@ -115,7 +157,7 @@ class OfflineSttEngine(
         }
         val rms = sqrt(sumSquares / pcm16.size).toFloat()
 
-        if (rms < 0.008f) {
+        if (rms < 0.002f) {
             return@withContext Result.failure(IllegalStateException("NO_SPEECH_DETECTED: No voice detected (silence or background noise)"))
         }
 
@@ -131,7 +173,7 @@ class OfflineSttEngine(
                 val diff = (s.toDouble() / 32768.0) - mean
                 sumSqDiff += diff * diff
             }
-            val std = kotlin.math.sqrt(sumSqDiff / pcm16.size).toFloat() + 1e-7f
+            val std = maxOf(sqrt(sumSqDiff / pcm16.size).toFloat(), 1e-4f)
 
             val floatBuf = FloatBuffer.allocate(pcm16.size)
             for (s in pcm16) {
@@ -157,6 +199,8 @@ class OfflineSttEngine(
             val processingTimeMs = SystemClock.elapsedRealtime() - startTime
             val rtf = if (audioDurationMs > 0) processingTimeMs.toFloat() / audioDurationMs.toFloat() else 0f
 
+            try { android.util.Log.i("OfflineSttEngine", "Transcribed ${pcm16.size} samples ($audioDurationMs ms) -> '$recognizedText' (latency: $processingTimeMs ms, RTF: $rtf)") } catch (_: Throwable) {}
+
             if (recognizedText.isNotBlank()) {
                 Result.success(
                     SttResult(
@@ -174,6 +218,8 @@ class OfflineSttEngine(
             Result.failure(IllegalStateException("INFERENCE_ERROR: ${e.message}", e))
         }
     }
+
+    private val specialTokens = setOf("<pad>", "<s>", "</s>", "<unk>")
 
     private fun decodeOutput(outputTensor: OnnxValue): String {
         return try {
@@ -199,8 +245,10 @@ class OfflineSttEngine(
                                     if (maxIdx < tokensList.size) {
                                         val token = tokensList[maxIdx]
                                         if (token == "|") {
-                                            sb.append(" ")
-                                        } else {
+                                            if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                                                sb.append(" ")
+                                            }
+                                        } else if (token !in specialTokens) {
                                             sb.append(token.replace(" ", " "))
                                         }
                                     }
@@ -218,8 +266,10 @@ class OfflineSttEngine(
                         if (idx in tokensList.indices) {
                             val token = tokensList[idx]
                             if (token == "|") {
-                                sb.append(" ")
-                            } else {
+                                if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                                    sb.append(" ")
+                                }
+                            } else if (token !in specialTokens) {
                                 sb.append(token.replace(" ", " "))
                             }
                         }

@@ -31,6 +31,7 @@ import org.coresense.itantra.ui.theme.PrimaryNeonGreen
 fun SettingsScreen(
     viewModel: MainViewModel,
     onNavigateToDemo: () -> Unit = {},
+    onNavigateToManageLanguages: () -> Unit = {},
     onNavigateBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -41,6 +42,7 @@ fun SettingsScreen(
     val modelsMap by viewModel.modelRegistry.models.collectAsState()
     val isReadBack by viewModel.isReadBackEnabled.collectAsState()
     val vadSensitivity by viewModel.vadSensitivity.collectAsState()
+    val testResult by viewModel.testConnectionResult.collectAsState()
 
     var editingCallsign by remember { mutableStateOf(false) }
     var tempCallsign by remember { mutableStateOf(callsign) }
@@ -101,13 +103,28 @@ fun SettingsScreen(
                             onDismissRequest = { langMenuExpanded = false }
                         ) {
                             Language.entries.forEach { lang ->
-                                val isInstalled = modelsMap[lang]?.status == org.coresense.itantra.stt.ModelStatus.INSTALLED
-                                val statusSuffix = if (isInstalled) " [Ready]" else " [Model Unavailable]"
+                                val meta = modelsMap[lang]
+                                val isCurrent = currentLang == lang
+                                val isReady = isCurrent && viewModel.sttEngine.isLanguageLoaded(lang)
+                                val isInstalled = viewModel.modelRegistry.isModelInstalled(lang)
+                                val statusSuffix = when {
+                                    isReady -> " [Ready]"
+                                    isInstalled -> " [Installed]"
+                                    else -> " [Not Installed]"
+                                }
                                 DropdownMenuItem(
-                                    text = { Text("${lang.nativeName} — ${lang.displayName}$statusSuffix") },
+                                    text = { 
+                                        Text(
+                                            "${lang.nativeName} — ${lang.displayName}$statusSuffix",
+                                            color = if (isInstalled) Color.White else Color.Gray
+                                        ) 
+                                    },
+                                    enabled = isInstalled,
                                     onClick = {
-                                        viewModel.setAppLanguage(lang)
-                                        langMenuExpanded = false
+                                        if (isInstalled) {
+                                            viewModel.setAppLanguage(lang)
+                                            langMenuExpanded = false
+                                        }
                                     }
                                 )
                             }
@@ -276,7 +293,70 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                 }
             }
+            if (connectionState is org.coresense.itantra.link.ConnectionState.Connected) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            val connectedPeer = (connectionState as org.coresense.itantra.link.ConnectionState.Connected).peer
+                            Button(
+                                onClick = { viewModel.testConnection(connectedPeer.id) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Test Connection to ${connectedPeer.name}")
+                            }
+                            if (testResult != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = testResult!!,
+                                    fontSize = 12.sp,
+                                    color = if (testResult!!.startsWith("PASS")) Color(0xFF00FF00) else if (testResult!!.startsWith("FAIL")) Color.Red else Color.Yellow,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+            }
             item { Spacer(modifier = Modifier.height(10.dp)) }
+        }
+
+        if (activeTransport == TransportType.LAN_UDP) {
+            item {
+                var manualIp by remember { mutableStateOf("") }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Add Manual IP (Fallback if Broadcast blocked)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = manualIp,
+                                onValueChange = { manualIp = it },
+                                label = { Text("IP Address") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(onClick = {
+                                if (manualIp.isNotBlank()) {
+                                    viewModel.lanUdpTransport.addManualPeer(manualIp.trim())
+                                    manualIp = ""
+                                }
+                            }) {
+                                Text("Add")
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
         }
 
         // VAD Sensitivity Slider
@@ -332,11 +412,21 @@ fun SettingsScreen(
         item {
             Text(text = "LANGUAGE MODEL PACKS (11 LANGUAGES)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
             Text(
-                text = "Models side-loaded in storage: ${viewModel.modelRegistry.getModelsStorageDirectory().absolutePath}",
+                text = "Models storage: ${viewModel.modelRegistry.getModelsStorageDirectory().absolutePath}",
                 fontSize = 10.sp,
                 color = Color.LightGray
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = onNavigateToManageLanguages,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonGreen)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp), tint = DarkSurface)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Manage Offline Language Packs", color = DarkSurface, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(10.dp))
         }
 
         items(Language.entries) { lang ->
@@ -419,15 +509,39 @@ fun LanguageModelCard(lang: Language, meta: ModelMetadata?, ttsStatus: TtsStatus
             }
 
             Column(horizontalAlignment = Alignment.End) {
-                val isInstalled = meta?.status == ModelStatus.INSTALLED
+                val isInstalled = (meta?.actualSizeMb ?: 0f) > 0f
+                val isBundled = (lang == Language.ENGLISH || lang == Language.HINDI)
+                val statusText = when {
+                    isBundled && isInstalled -> "BUNDLED"
+                    isBundled && !isInstalled -> "MISSING"
+                    meta?.status == ModelStatus.READY -> "READY"
+                    meta?.status == ModelStatus.LOADING -> "LOADING"
+                    meta?.status == ModelStatus.DOWNLOADING -> "DOWNLOADING"
+                    meta?.status == ModelStatus.VERIFYING -> "VERIFYING"
+                    meta?.status == ModelStatus.EXTRACTING -> "EXTRACTING"
+                    meta?.status == ModelStatus.MODEL_LOAD_ERROR -> "LOAD ERROR"
+                    meta?.status == ModelStatus.INFERENCE_ERROR -> "INFER ERROR"
+                    isInstalled -> "INSTALLED"
+                    meta?.status == ModelStatus.COMING_SOON -> "COMING SOON"
+                    else -> "NOT INSTALLED"
+                }
+                val statusColor = when {
+                    isBundled && isInstalled -> PrimaryNeonGreen
+                    meta?.status == ModelStatus.READY || isInstalled -> PrimaryNeonGreen
+                    meta?.status == ModelStatus.LOADING || meta?.status == ModelStatus.DOWNLOADING || meta?.status == ModelStatus.EXTRACTING -> Color(0xFFFFD700)
+                    meta?.status == ModelStatus.VERIFYING -> Color(0xFF00E5FF)
+                    meta?.status == ModelStatus.MODEL_LOAD_ERROR || meta?.status == ModelStatus.INFERENCE_ERROR || (isBundled && !isInstalled) -> Color(0xFFFF5252)
+                    meta?.status == ModelStatus.COMING_SOON -> Color(0xFFFFB300)
+                    else -> Color.Gray
+                }
                 Text(
-                    text = if (isInstalled) "INSTALLED" else "MISSING",
+                    text = statusText,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp,
-                    color = if (isInstalled) PrimaryNeonGreen else Color(0xFFFF5252)
+                    color = statusColor
                 )
                 Text(
-                    text = if (isInstalled) String.format("%.1f MB", meta.actualSizeMb) else "~${meta?.estimatedSizeMb?.toInt() ?: 80} MB",
+                    text = if (isInstalled) String.format("%.1f MB", meta?.actualSizeMb ?: 0f) else "~${meta?.estimatedSizeMb?.toInt() ?: 80} MB",
                     fontSize = 10.sp,
                     color = Color.Gray
                 )

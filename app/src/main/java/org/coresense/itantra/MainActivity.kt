@@ -161,6 +161,7 @@ fun MainAppScaffold(
     var inDemoScreen by remember { mutableStateOf(false) }
     var inReceiverScreen by remember { mutableStateOf(false) }
     var inSettingsScreen by remember { mutableStateOf(false) }
+    var inManageLanguagesScreen by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
     var showMyProfile by remember { mutableStateOf(false) }
     var showSosHistory by remember { mutableStateOf(false) }
@@ -171,9 +172,16 @@ fun MainAppScaffold(
     val selectedLang by viewModel.selectedLanguage.collectAsState()
     val strings = remember(selectedLang) { org.coresense.itantra.ui.i18n.AppLocalization.getStrings(selectedLang) }
 
-    if (inSettingsScreen) {
+    if (inManageLanguagesScreen) {
+        ManageLanguagesScreen(
+            viewModel = viewModel,
+            onNavigateBack = { inManageLanguagesScreen = false }
+        )
+    } else if (inSettingsScreen) {
         SettingsScreen(
             viewModel = viewModel,
+            onNavigateToDemo = { inDemoScreen = true },
+            onNavigateToManageLanguages = { inManageLanguagesScreen = true },
             onNavigateBack = { inSettingsScreen = false }
         )
     } else if (inReceiverScreen) {
@@ -315,6 +323,13 @@ fun MainAppScaffold(
                                         onClick = { 
                                             showProfileMenu = false 
                                             inSettingsScreen = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Manage Languages") },
+                                        onClick = { 
+                                            showProfileMenu = false 
+                                            inManageLanguagesScreen = true
                                         }
                                     )
                                     DropdownMenuItem(

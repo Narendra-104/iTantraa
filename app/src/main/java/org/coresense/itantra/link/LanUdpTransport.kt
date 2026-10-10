@@ -91,6 +91,14 @@ class LanUdpTransport(
         }
     }
 
+    fun addManualPeer(ip: String) {
+        val currentPeers = _discoveredPeers.value.toMutableList()
+        if (currentPeers.none { it.address == ip }) {
+            currentPeers.add(PeerDevice(id = ip, name = "Manual ($ip)", address = ip, transportType = TransportType.LAN_UDP))
+            _discoveredPeers.value = currentPeers
+        }
+    }
+
     override fun connect(peer: PeerDevice): Result<Unit> {
         targetPeer = peer
         val ok = ensureSocket()
@@ -126,6 +134,14 @@ class LanUdpTransport(
                         sock.receive(packet)
                         if (packet.length > 0) {
                             val data = buffer.copyOfRange(0, packet.length)
+                            val senderIp = packet.address.hostAddress
+                            if (senderIp != null) {
+                                val currentPeers = _discoveredPeers.value.toMutableList()
+                                if (currentPeers.none { it.address == senderIp }) {
+                                    currentPeers.add(PeerDevice(id = senderIp, name = "Peer ($senderIp)", address = senderIp, transportType = TransportType.LAN_UDP))
+                                    _discoveredPeers.value = currentPeers
+                                }
+                            }
                             _incomingPackets.emit(data)
                         }
                     } catch (e: Exception) {

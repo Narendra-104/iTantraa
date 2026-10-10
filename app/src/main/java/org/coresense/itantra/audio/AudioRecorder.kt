@@ -50,25 +50,40 @@ class AudioRecorder {
 
         val bufferSize = maxOf(minBufferSize, AudioConfig.BYTES_PER_FRAME * 4)
 
-        return try {
-            val recorder = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                AudioConfig.SAMPLE_RATE_HZ,
-                AudioConfig.CHANNEL_CONFIG,
-                AudioConfig.AUDIO_FORMAT,
-                bufferSize
-            )
+        val audioSources = listOf(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC
+        )
 
-            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-                recorder.release()
-                return Result.failure(IllegalStateException("AudioRecord initialization failed (state != INITIALIZED)"))
+        for (source in audioSources) {
+            try {
+                val recorder = AudioRecord(
+                    source,
+                    AudioConfig.SAMPLE_RATE_HZ,
+                    AudioConfig.CHANNEL_CONFIG,
+                    AudioConfig.AUDIO_FORMAT,
+                    bufferSize
+                )
+
+                if (recorder.state == AudioRecord.STATE_INITIALIZED) {
+                    recorder.startRecording()
+                    audioRecord = recorder
+                    isRecording.set(true)
+                    _isCapturing.value = true
+                    break
+                } else {
+                    recorder.release()
+                }
+            } catch (_: Exception) {
             }
+        }
 
-            recorder.startRecording()
-            audioRecord = recorder
-            isRecording.set(true)
-            _isCapturing.value = true
+        val recorder = audioRecord
+        if (recorder == null) {
+            return Result.failure(IllegalStateException("AudioRecord initialization failed (state != INITIALIZED)"))
+        }
 
+        return try {
             recordingJob = scope.launch(Dispatchers.IO) {
                 val frameBuffer = ShortArray(AudioConfig.SAMPLES_PER_FRAME)
                 while (isActive && isRecording.get()) {

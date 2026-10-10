@@ -49,6 +49,7 @@ import org.coresense.itantra.reliability.ReliabilityStats
 import org.coresense.itantra.sentence.SentenceAssembler
 import org.coresense.itantra.storage.MessageEntity
 import org.coresense.itantra.stt.LanguageModelRegistry
+import org.coresense.itantra.stt.ModelDownloadManager
 import org.coresense.itantra.stt.ModelMetadata
 import org.coresense.itantra.stt.OfflineSttEngine
 import org.coresense.itantra.stt.SttEngine
@@ -76,22 +77,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isReadBackEnabled = MutableStateFlow(false)
     val vadSensitivity = MutableStateFlow(0.5f)
 
-    fun setAppLanguage(lang: Language) {
-        selectedLanguage.value = lang
-        liveTranscript.value = "${lang.displayName} STT [Model Unavailable]"
-        viewModelScope.launch(Dispatchers.IO) {
-            val res = sttEngine.initialize(lang)
-            if (res.isFailure) {
-                val err = res.exceptionOrNull()?.message ?: "Failed to load model"
-                android.util.Log.e("MainViewModel", "STT init failed for ${lang.displayName}: $err")
-                liveTranscript.value = "${lang.displayName} STT [Model Unavailable]"
-            } else {
-                android.util.Log.i("MainViewModel", "STT initialized successfully for ${lang.displayName}")
-                liveTranscript.value = "${lang.displayName} STT [Ready]"
-            }
-        }
-    }
-
     // Audio & VAD
     val audioRecorder = AudioRecorder()
     val vadDetector = SileroVadDetector()
@@ -101,8 +86,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // STT & TTS
     val modelRegistry = LanguageModelRegistry(context)
     val sttEngine: SttEngine = OfflineSttEngine(modelRegistry)
+    val downloadManager = ModelDownloadManager(modelRegistry)
     val ttsEngine: TtsEngine = OfflineAndroidTtsEngine(context)
     val sentenceAssembler = SentenceAssembler()
+
+    fun setAppLanguage(lang: Language): Boolean {
+        if (!modelRegistry.isModelInstalled(lang)) {
+            liveTranscript.value = "${lang.displayName} STT [Not Installed - Download in Settings]"
+            return false
+        }
+        selectedLanguage.value = lang
+        liveTranscript.value = "${lang.displayName} STT [Loading...]"
+        modelRegistry.updateModelStatus(lang, org.coresense.itantra.stt.ModelStatus.LOADING)
+        viewModelScope.launch(Dispatchers.IO) {
+            val res = sttEngine.initialize(lang)
+            if (res.isFailure) {
+                val err = res.exceptionOrNull()?.message ?: "Failed to load model"
+                android.util.Log.e("MainViewModel", "STT init failed for ${lang.displayName}: $err")
+                val isUnavailable = err.contains("STT_MODEL_UNAVAILABLE")
+                val status = if (isUnavailable) org.coresense.itantra.stt.ModelStatus.MODEL_UNAVAILABLE else org.coresense.itantra.stt.ModelStatus.MODEL_LOAD_ERROR
+                modelRegistry.updateModelStatus(lang, status, err)
+                liveTranscript.value = if (isUnavailable) {
+                    "${lang.displayName} STT [Model Unavailable]"
+                } else {
+                    "${lang.displayName} STT [Load Error: ${err.take(30)}]"
+                }
+            } else {
+                android.util.Log.i("MainViewModel", "STT initialized successfully for ${lang.displayName}")
+                modelRegistry.updateModelStatus(lang, org.coresense.itantra.stt.ModelStatus.READY)
+                liveTranscript.value = "${lang.displayName} STT [Ready]"
+            }
+        }
+        return true
+    }
+
+    fun downloadLanguage(lang: Language) {
+        downloadManager.startDownload(lang, viewModelScope) { result: Result<Unit> ->
+            if (result.isSuccess) {
+                modelRegistry.updateModelStatus(lang, org.coresense.itantra.stt.ModelStatus.READY)
+            }
+        }
+    }
+
+    fun cancelLanguageDownload(lang: Language) {
+        downloadManager.cancelDownload(lang)
+    }
+
+    fun deleteLanguage(lang: Language): Result<Unit> {
+        if (selectedLanguage.value == lang) {
+            setAppLanguage(Language.HINDI)
+        }
+        return downloadManager.deleteDownloadedModel(lang)
+    }
 
     // Transports
     val bluetoothTransport = BluetoothTransport(context, viewModelScope)
@@ -169,12 +204,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Initialize STT engine: extract bundled models and load active language
         viewModelScope.launch(Dispatchers.IO) {
             modelRegistry.refresh()
+            liveTranscript.value = "${selectedLanguage.value.displayName} STT [Loading...]"
+            modelRegistry.updateModelStatus(selectedLanguage.value, org.coresense.itantra.stt.ModelStatus.LOADING)
             val res = sttEngine.initialize(selectedLanguage.value)
             if (res.isSuccess) {
                 try { android.util.Log.i("MainViewModel", "Initial STT model loaded: ${selectedLanguage.value.displayName}") } catch (_: Throwable) {}
+                modelRegistry.updateModelStatus(selectedLanguage.value, org.coresense.itantra.stt.ModelStatus.READY)
                 liveTranscript.value = "${selectedLanguage.value.displayName} STT [Ready]"
             } else {
-                liveTranscript.value = "${selectedLanguage.value.displayName} STT [Model Unavailable]"
+                val err = res.exceptionOrNull()?.message ?: "Failed to load model"
+                val isUnavailable = err.contains("STT_MODEL_UNAVAILABLE")
+                val status = if (isUnavailable) org.coresense.itantra.stt.ModelStatus.MODEL_UNAVAILABLE else org.coresense.itantra.stt.ModelStatus.MODEL_LOAD_ERROR
+                modelRegistry.updateModelStatus(selectedLanguage.value, status, err)
+                liveTranscript.value = if (isUnavailable) {
+                    "${selectedLanguage.value.displayName} STT [Model Unavailable]"
+                } else {
+                    "${selectedLanguage.value.displayName} STT [Load Error: ${err.take(30)}]"
+                }
             }
         }
 
@@ -375,36 +421,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onPttReleased() {
         if (!isWalkieTalkieMode.value) return
-        audioCaptureJob?.cancel()
-        audioCaptureJob = null
-        audioRecorder.stop()
-        TransmissionService.stop(context)
-
-        val capturedSamples: ShortArray
-        synchronized(pttAudioBuffer) {
-            capturedSamples = pttAudioBuffer.toShortArray()
-            pttAudioBuffer.clear()
-        }
-
-        if (capturedSamples.isEmpty()) {
-            activePipelineStage.value = "IDLE"
-            liveTranscript.value = "No audio captured"
-            return
-        }
-
-        activePipelineStage.value = "STT"
-        isProcessingStt.value = true
-        liveTranscript.value = "Transcribing..."
-
         viewModelScope.launch(Dispatchers.IO) {
-            val initRes = sttEngine.initialize(selectedLanguage.value)
-            if (initRes.isFailure) {
-                isProcessingStt.value = false
-                val errorMsg = initRes.exceptionOrNull()?.message ?: "STT Model Unavailable"
-                liveTranscript.value = errorMsg
+            delay(100)
+            audioCaptureJob?.cancel()
+            audioCaptureJob = null
+            audioRecorder.stop()
+            TransmissionService.stop(context)
+
+            val capturedSamples: ShortArray
+            synchronized(pttAudioBuffer) {
+                capturedSamples = pttAudioBuffer.toShortArray()
+                pttAudioBuffer.clear()
+            }
+
+            if (capturedSamples.isEmpty()) {
                 activePipelineStage.value = "IDLE"
+                liveTranscript.value = "No audio captured"
                 return@launch
             }
+
+            activePipelineStage.value = "STT"
+            isProcessingStt.value = true
+            liveTranscript.value = "Transcribing..."
+
+            if (!sttEngine.isLanguageLoaded(selectedLanguage.value)) {
+                val initRes = sttEngine.initialize(selectedLanguage.value)
+                if (initRes.isFailure) {
+                    isProcessingStt.value = false
+                    val errorMsg = initRes.exceptionOrNull()?.message ?: "STT Model Unavailable"
+                    liveTranscript.value = errorMsg
+                    activePipelineStage.value = "IDLE"
+                    return@launch
+                }
+            }
+
             val sttRes = sttEngine.transcribe(capturedSamples)
             isProcessingStt.value = false
 
@@ -543,6 +593,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    val testConnectionResult = MutableStateFlow<String?>(null)
+
+    fun testConnection(peerId: String) {
+        testConnectionResult.value = "Testing..."
+        val msgId = (System.currentTimeMillis() shl 16) or (UUID.randomUUID().hashCode().toLong() and 0xFFFFL)
+        val packet = Packet(
+            msgId = msgId,
+            senderId = identityRepository.getDeviceId(),
+            receiverId = peerId,
+            seq = reliabilityEngine.nextSequenceNumber(),
+            lang = selectedLanguage.value,
+            priority = PacketPriority.NORMAL,
+            text = "[TEST_CONNECTION]",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.DATA
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            reliabilityEngine.enqueue(packet)
+            reliabilityEngine.messageDeliveryUpdates.collect { (id, state) ->
+                if (id == msgId) {
+                    if (state is DeliveryState.Delivered) {
+                        testConnectionResult.value = "PASS (RTT: ${state.rttMs} ms)"
+                    } else if (state is DeliveryState.Failed) {
+                        testConnectionResult.value = "FAIL: ${state.reason}"
+                    }
+                }
+            }
+        }
+    }
+
     // --- SOS Emergency & Dashboard Features ---
 
     fun dispatchEmergencyService(serviceName: String, description: String) {
@@ -643,6 +723,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // 2. Direct message check: specifically addressed to my deviceId
         val isDirectForMe = packet.receiverId != null && packet.receiverId.equals(myDeviceId, ignoreCase = true)
+
+        if (packet.text == "[TEST_CONNECTION]") {
+            // Already ACKed by ReliabilityEngine, ignore for Chat/DB
+            return
+        }
 
         // 3. Department request check
         val targetDeptId = packet.departmentId ?: resolveDepartmentId(packet.receiverId)
