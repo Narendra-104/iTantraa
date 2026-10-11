@@ -422,7 +422,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onPttReleased() {
         if (!isWalkieTalkieMode.value) return
         viewModelScope.launch(Dispatchers.IO) {
-            delay(100)
+            delay(150) // Allow trailing audio frame to complete and avoid clipping word ending
             audioCaptureJob?.cancel()
             audioCaptureJob = null
             audioRecorder.stop()

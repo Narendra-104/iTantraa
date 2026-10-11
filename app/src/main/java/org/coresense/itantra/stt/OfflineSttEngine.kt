@@ -224,7 +224,7 @@ class OfflineSttEngine(
     private fun decodeOutput(outputTensor: OnnxValue): String {
         return try {
             val value = outputTensor.value
-            when (value) {
+            val raw = when (value) {
                 is Array<*> -> {
                     val first = value.firstOrNull()
                     if (first is Array<*>) {
@@ -241,6 +241,8 @@ class OfflineSttEngine(
                                         maxIdx = i
                                     }
                                 }
+                                // CTC greedy collapse: consecutive identical tokens are collapsed,
+                                // blank (index 0) resets lastTokenIdx so identical tokens separated by blank are emitted.
                                 if (maxIdx != 0 && maxIdx != lastTokenIdx) {
                                     if (maxIdx < tokensList.size) {
                                         val token = tokensList[maxIdx]
@@ -256,30 +258,46 @@ class OfflineSttEngine(
                                 lastTokenIdx = maxIdx
                             }
                         }
-                        sb.toString().replace("  ", " ").trim()
+                        sb.toString()
                     } else ""
                 }
                 is LongArray -> {
                     val sb = StringBuilder()
+                    var lastTokenIdx = -1
                     for (tokenIdx in value) {
                         val idx = tokenIdx.toInt()
-                        if (idx in tokensList.indices) {
-                            val token = tokensList[idx]
-                            if (token == "|") {
-                                if (sb.isNotEmpty() && !sb.endsWith(" ")) {
-                                    sb.append(" ")
+                        if (idx != 0 && idx != lastTokenIdx) {
+                            if (idx in tokensList.indices) {
+                                val token = tokensList[idx]
+                                if (token == "|") {
+                                    if (sb.isNotEmpty() && !sb.endsWith(" ")) {
+                                        sb.append(" ")
+                                    }
+                                } else if (token !in specialTokens) {
+                                    sb.append(token.replace(" ", " "))
                                 }
-                            } else if (token !in specialTokens) {
-                                sb.append(token.replace(" ", " "))
                             }
                         }
+                        lastTokenIdx = idx
                     }
-                    sb.toString().replace("  ", " ").trim()
+                    sb.toString()
                 }
                 else -> ""
             }
+            formatDecodedText(raw)
         } catch (e: Exception) {
             ""
+        }
+    }
+
+    private fun formatDecodedText(raw: String): String {
+        if (raw.isBlank()) return ""
+        val cleaned = raw.replace(Regex("\\s+"), " ").trim()
+        val lang = currentLang ?: Language.ENGLISH
+        return if (lang == Language.ENGLISH) {
+            cleaned.lowercase()
+        } else {
+            cleaned
         }
     }
 
