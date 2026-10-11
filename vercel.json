@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/iTantra-v17.apk",
+      "destination": "https://github.com/Narendra-104/iTantraa/releases/download/v17.0.0/iTantra-v17.apk"
+    }
+  ]
+}
