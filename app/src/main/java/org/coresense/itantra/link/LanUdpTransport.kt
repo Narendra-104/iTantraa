@@ -207,6 +207,19 @@ class LanUdpTransport(
                 } catch (ignored: Exception) {
                 }
             }
+            // Also send direct unicast to all discovered peers for resilience against AP multicast filtering
+            val peers = _discoveredPeers.value
+            for (p in peers) {
+                if (p.address != "255.255.255.255" && p.address.isNotBlank()) {
+                    try {
+                        val addr = InetAddress.getByName(p.address)
+                        val packet = DatagramPacket(data, data.size, addr, UDP_PORT)
+                        sock.send(packet)
+                        atLeastOneSent = true
+                    } catch (ignored: Exception) {
+                    }
+                }
+            }
         }
         return@withContext atLeastOneSent
     }

@@ -38,19 +38,32 @@ fun ChatsScreen(viewModel: MainViewModel) {
     var inputText by remember { mutableStateOf("") }
     var showTopQuestions by remember { mutableStateOf(false) }
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val myDeviceId = remember { viewModel.identityRepository.getDeviceId() }
 
     var selectedRecipient by remember { mutableStateOf(connectedPeer?.id ?: "GLOBAL") }
     var recipientMenuExpanded by remember { mutableStateOf(false) }
 
     // Aggregate all available and past recipients
-    val recipientOptions = remember(connectedPeer, discoveredPeers, messages) {
+    val recipientOptions = remember(connectedPeer, discoveredPeers, messages, myDeviceId) {
         val list = mutableListOf<String>()
-        connectedPeer?.let { list.add(it.id) }
-        discoveredPeers.forEach { p -> if (!list.contains(p.id)) list.add(p.id) }
-        messages.mapNotNull { if (it.isIncoming) it.senderId else it.receiverId }.forEach { id ->
-            if (id.isNotBlank() && !list.contains(id)) list.add(id)
+        list.add("ALL")
+        list.add("GLOBAL")
+        connectedPeer?.let {
+            if (it.id != "hotspot_broadcast" && !it.id.equals(myDeviceId, ignoreCase = true) && !list.contains(it.id)) {
+                list.add(it.id)
+            }
         }
-        listOf("GLOBAL", "NDRF", "Medical", "Police", "Fire & Disaster", "Railway", "Civil Defence").forEach { d ->
+        discoveredPeers.forEach { p ->
+            if (p.id != "hotspot_broadcast" && !p.id.equals(myDeviceId, ignoreCase = true) && !list.contains(p.id)) {
+                list.add(p.id)
+            }
+        }
+        messages.mapNotNull { if (it.isIncoming) it.senderId else it.receiverId }.forEach { id ->
+            if (id.isNotBlank() && id != "GLOBAL" && id != "ALL" && !id.equals(myDeviceId, ignoreCase = true) && !list.contains(id)) {
+                list.add(id)
+            }
+        }
+        listOf("NDRF", "Medical", "Police", "Fire & Disaster", "Railway", "Civil Defence").forEach { d ->
             if (!list.contains(d)) list.add(d)
         }
         list
@@ -63,16 +76,24 @@ fun ChatsScreen(viewModel: MainViewModel) {
 
     val resolvedDept = remember(selectedRecipient) { viewModel.resolveDepartmentId(selectedRecipient) }
 
-    val filteredMessages = remember(messages, selectedRecipient, currentConversationId, resolvedDept) {
-        if (selectedRecipient == "ALL") {
-            messages
-        } else {
-            messages.filter { msg ->
+    val filteredMessages = remember(messages, selectedRecipient, currentConversationId, resolvedDept, myDeviceId) {
+        when (selectedRecipient) {
+            "ALL" -> messages
+            "GLOBAL" -> messages.filter { msg ->
+                // In GLOBAL channel, display:
+                // 1. Broadcast messages (receiverId is null or "GLOBAL")
+                // 2. Direct incoming messages addressed to this device (so incoming messages are never missed!)
+                // 3. Outgoing messages sent by this device to GLOBAL/broadcast
+                val isBroadcast = msg.receiverId.isNullOrBlank() || msg.receiverId.equals("GLOBAL", ignoreCase = true)
+                val isDirectToMe = msg.isIncoming && (msg.receiverId.equals(myDeviceId, ignoreCase = true) || viewModel.isDirectRecipient(msg.receiverId, myDeviceId))
+                val isMyBroadcast = !msg.isIncoming && isBroadcast
+                isBroadcast || isDirectToMe || isMyBroadcast
+            }
+            else -> messages.filter { msg ->
                 (currentConversationId != null && msg.conversationId == currentConversationId) ||
                 (resolvedDept != null && msg.departmentId.equals(resolvedDept, ignoreCase = true)) ||
                 msg.receiverId.equals(selectedRecipient, ignoreCase = true) ||
-                msg.senderId.equals(selectedRecipient, ignoreCase = true) ||
-                (selectedRecipient == "GLOBAL" && (msg.receiverId == null || msg.receiverId.equals("GLOBAL", ignoreCase = true)))
+                msg.senderId.equals(selectedRecipient, ignoreCase = true)
             }
         }
     }
@@ -158,7 +179,12 @@ fun ChatsScreen(viewModel: MainViewModel) {
                 recipientOptions.forEach { r ->
                     DropdownMenuItem(
                         text = {
-                            val label = if (connectedPeer != null && r == connectedPeer.id) "${connectedPeer.name} ($r)" else r
+                            val label = when {
+                                r == "ALL" -> "ALL (Unified Feed)"
+                                r == "GLOBAL" -> "GLOBAL (Broadcast)"
+                                connectedPeer != null && r == connectedPeer.id -> "${connectedPeer.name} ($r)"
+                                else -> r
+                            }
                             Text(label)
                         },
                         onClick = {
@@ -224,8 +250,14 @@ fun ChatsScreen(viewModel: MainViewModel) {
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 if (!isMine) {
+                                    val isDirect = msg.receiverId?.equals(myDeviceId, ignoreCase = true) == true || viewModel.isDirectRecipient(msg.receiverId, myDeviceId)
+                                    val senderDisplay = if (isDirect && (selectedRecipient == "GLOBAL" || selectedRecipient == "ALL")) {
+                                        "${msg.senderId} [Direct]"
+                                    } else {
+                                        msg.senderId
+                                    }
                                     Text(
-                                        text = msg.senderId,
+                                        text = senderDisplay,
                                         color = PrimaryNeonGreen,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold

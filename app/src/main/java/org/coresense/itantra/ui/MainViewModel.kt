@@ -721,8 +721,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // 2. Direct message check: specifically addressed to my deviceId
-        val isDirectForMe = packet.receiverId != null && packet.receiverId.equals(myDeviceId, ignoreCase = true)
+        // 2. Direct message check: specifically addressed to my deviceId or local IP
+        val isDirectForMe = isDirectRecipient(packet.receiverId, myDeviceId)
 
         if (packet.text == "[TEST_CONNECTION]") {
             // Already ACKed by ReliabilityEngine, ignore for Chat/DB
@@ -836,6 +836,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun isDepartment(nameOrId: String?): Boolean = resolveDepartmentId(nameOrId) != null
+    fun isDirectRecipient(receiverId: String?, myDeviceId: String = identityRepository.getDeviceId()): Boolean {
+        if (receiverId.isNullOrBlank()) return false
+        if (receiverId.equals(myDeviceId, ignoreCase = true)) return true
+        if (receiverId.equals("GLOBAL", ignoreCase = true) || receiverId.equals("ALL", ignoreCase = true)) return false
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val netIf = interfaces.nextElement()
+                val addrs = netIf.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    val host = addr.hostAddress
+                    if (host != null && host.equals(receiverId, ignoreCase = true)) {
+                        return true
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return false
+    }
 
     companion object {
         fun getConversationId(partyA: String, partyB: String): String {
