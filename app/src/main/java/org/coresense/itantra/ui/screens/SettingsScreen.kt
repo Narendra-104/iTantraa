@@ -214,11 +214,17 @@ fun SettingsScreen(
             ) {
                 Text(text = "PEER DISCOVERY & PAIRING", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
                 Row {
-                    TextButton(onClick = { viewModel.startDiscovery() }) {
+                    TextButton(onClick = { 
+                        android.util.Log.i("WifiDirectTransport", "UI: Scan button pressed by user")
+                        viewModel.startDiscovery() 
+                    }) {
                         Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
                         Text(" Scan", fontSize = 12.sp)
                     }
-                    TextButton(onClick = { viewModel.stopDiscovery() }) {
+                    TextButton(onClick = { 
+                        android.util.Log.i("WifiDirectTransport", "UI: Stop discovery button pressed by user")
+                        viewModel.stopDiscovery() 
+                    }) {
                         Text("Stop", fontSize = 12.sp)
                     }
                 }
@@ -226,7 +232,72 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(4.dp))
         }
 
-        if (discoveredPeers.isEmpty()) {
+        // Active Discovery or Error feedback banner (always visible, not hidden when peers empty)
+        if (connectionState is org.coresense.itantra.link.ConnectionState.Discovering) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = PrimaryNeonGreen,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Scanning for nearby peers...",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PrimaryNeonGreen
+                            )
+                            Text(
+                                text = "Ensure the other phone has Wi-Fi ON and is also scanning.",
+                                fontSize = 10.sp,
+                                color = Color.LightGray
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+        } else if (connectionState is org.coresense.itantra.link.ConnectionState.Failed) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF330000)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Error",
+                            tint = Color.Red,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = (connectionState as org.coresense.itantra.link.ConnectionState.Failed).reason,
+                            color = Color(0xFFFF6666),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+        }
+
+        if (discoveredPeers.isEmpty() && connectionState !is org.coresense.itantra.link.ConnectionState.Discovering) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -241,7 +312,7 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.height(10.dp))
             }
-        } else {
+        } else if (discoveredPeers.isNotEmpty()) {
             items(discoveredPeers) { peer ->
                 val isThisConnected = (connectionState as? org.coresense.itantra.link.ConnectionState.Connected)?.peer?.id == peer.id
                 Card(
@@ -281,17 +352,6 @@ fun SettingsScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
-            }
-            if (connectionState is org.coresense.itantra.link.ConnectionState.Failed) {
-                item {
-                    Text(
-                        text = "Connection Error: ${(connectionState as org.coresense.itantra.link.ConnectionState.Failed).reason}",
-                        color = Color.Red,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
             }
             if (connectionState is org.coresense.itantra.link.ConnectionState.Connected) {
                 item {

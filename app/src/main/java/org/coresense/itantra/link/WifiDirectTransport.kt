@@ -76,6 +76,7 @@ class WifiDirectTransport(
 
     init {
         ensureChannel()
+        registerReceiverIfNeeded()
     }
 
     @Synchronized
@@ -85,6 +86,7 @@ class WifiDirectTransport(
                 Log.w(TAG, "Wi-Fi Direct channel lost. Will re-initialize on demand.")
                 channel = null
             }
+            Log.d(TAG, "P2P Manager initialized channel: ${channel != null}")
         }
         return channel
     }
@@ -97,21 +99,25 @@ class WifiDirectTransport(
                 WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
                     val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
                     val isEnabled = state == WifiP2pManager.WIFI_P2P_STATE_ENABLED
-                    Log.d(TAG, "P2P State changed: isEnabled=$isEnabled")
+                    Log.i(TAG, "Broadcast received: WIFI_P2P_STATE_CHANGED_ACTION: isEnabled=$isEnabled (state=$state)")
                     if (!isEnabled) {
-                        _connectionState.value = ConnectionState.Failed("Wi-Fi Direct is disabled")
+                        _connectionState.value = ConnectionState.Failed("Wi-Fi Direct is disabled on device")
                     }
                 }
                 WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                    Log.d(TAG, "P2P Peers changed, requesting peers...")
-                    val chan = ensureChannel() ?: return
+                    Log.i(TAG, "Broadcast received: WIFI_P2P_PEERS_CHANGED_ACTION -> requesting peers via requestPeers()")
+                    val chan = ensureChannel()
+                    if (chan == null) {
+                        Log.e(TAG, "requestPeers failed: channel is null")
+                        return
+                    }
                     p2pManager?.requestPeers(chan, this@WifiDirectTransport)
                 }
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
                     val chan = ensureChannel() ?: return
                     @Suppress("DEPRECATION")
                     val networkInfo = intent.getParcelableExtra<NetworkInfo>(WifiP2pManager.EXTRA_NETWORK_INFO)
-                    Log.d(TAG, "P2P Connection changed: isConnected=${networkInfo?.isConnected}, detailedState=${networkInfo?.detailedState}")
+                    Log.i(TAG, "Broadcast received: WIFI_P2P_CONNECTION_CHANGED_ACTION: isConnected=${networkInfo?.isConnected}, state=${networkInfo?.detailedState}")
                     if (networkInfo?.isConnected == true) {
                         p2pManager?.requestConnectionInfo(chan, this@WifiDirectTransport)
                     } else if (networkInfo?.detailedState == NetworkInfo.DetailedState.DISCONNECTED ||
@@ -124,15 +130,18 @@ class WifiDirectTransport(
                 WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
                     @Suppress("DEPRECATION")
                     val device = intent.getParcelableExtra<WifiP2pDevice>(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE)
-                    Log.d(TAG, "This P2P device updated: ${device?.deviceName} (${device?.status})")
+                    Log.d(TAG, "Broadcast received: WIFI_P2P_THIS_DEVICE_CHANGED_ACTION: ${device?.deviceName} (${device?.deviceAddress}, status=${device?.status})")
                 }
             }
         }
     }
 
     override fun onPeersAvailable(peers: WifiP2pDeviceList?) {
-        val list = peers?.deviceList ?: emptyList()
-        Log.i(TAG, "onPeersAvailable: found ${list.size} peers")
+        val list = peers?.deviceList?.toList() ?: emptyList()
+        Log.i(TAG, "onPeersAvailable callback: received ${list.size} peer(s) from framework")
+        list.forEachIndexed { i, dev ->
+            Log.i(TAG, "  Peer #$i: name='${dev.deviceName}', address='${dev.deviceAddress}', status=${dev.status}, isGroupOwner=${dev.isGroupOwner}")
+        }
         val mapped = list.map { dev ->
             PeerDevice(
                 id = dev.deviceAddress,
@@ -143,6 +152,7 @@ class WifiDirectTransport(
             )
         }
         _discoveredPeers.value = mapped
+        Log.i(TAG, "Delivered ${mapped.size} peer(s) to discoveredPeers StateFlow for UI")
     }
 
     override fun onConnectionInfoAvailable(info: WifiP2pInfo?) {
@@ -240,11 +250,15 @@ class WifiDirectTransport(
     }
 
     private fun hasPermissions(): Boolean {
+        val fineLocation = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseLocation = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val nearby = ContextCompat.checkSelfPermission(context, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
-            if (!nearby) return false
+            Log.d(TAG, "hasPermissions: NEARBY_WIFI_DEVICES=$nearby, FINE_LOCATION=$fineLocation, COARSE_LOCATION=$coarseLocation")
+            return nearby || fineLocation
         }
-        return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        Log.d(TAG, "hasPermissions: FINE_LOCATION=$fineLocation, COARSE_LOCATION=$coarseLocation")
+        return fineLocation || coarseLocation
     }
 
     private fun registerReceiverIfNeeded() {
@@ -262,67 +276,112 @@ class WifiDirectTransport(
                 ContextCompat.RECEIVER_EXPORTED
             )
             isReceiverRegistered = true
+            Log.d(TAG, "Registered Wi-Fi P2P broadcast receiver (RECEIVER_EXPORTED)")
         }
     }
 
     @SuppressLint("MissingPermission")
     override fun startDiscovery(): Result<Unit> {
+        Log.i(TAG, "startDiscovery() triggered")
+
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        if (wifiManager?.isWifiEnabled == false) {
+        val isWifiOn = wifiManager?.isWifiEnabled == true
+        Log.d(TAG, "Wi-Fi hardware enabled: $isWifiOn")
+        if (!isWifiOn) {
             val msg = "Wi-Fi is turned off. Please turn on Wi-Fi."
+            Log.e(TAG, msg)
             _connectionState.value = ConnectionState.Failed(msg)
             return Result.failure(IllegalStateException(msg))
         }
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            val gpsEnabled = locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true ||
-                    locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true
-            if (!gpsEnabled) {
-                val msg = "Location must be turned ON for Wi-Fi Direct discovery."
-                _connectionState.value = ConnectionState.Failed(msg)
-                return Result.failure(IllegalStateException(msg))
-            }
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        val gpsEnabled = locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true ||
+                locationManager?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true
+        Log.d(TAG, "Location provider enabled: $gpsEnabled")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && !gpsEnabled) {
+            val msg = "Location must be turned ON for Wi-Fi Direct discovery."
+            Log.e(TAG, msg)
+            _connectionState.value = ConnectionState.Failed(msg)
+            return Result.failure(IllegalStateException(msg))
         }
 
-        if (!hasPermissions()) {
+        val hasPerms = hasPermissions()
+        Log.d(TAG, "Permissions check result: $hasPerms")
+        if (!hasPerms) {
             val msg = "Required Wi-Fi Direct permissions not granted."
+            Log.e(TAG, msg)
             _connectionState.value = ConnectionState.Failed(msg)
             return Result.failure(SecurityException(msg))
         }
 
         registerReceiverIfNeeded()
 
-        val manager = p2pManager ?: return Result.failure(IllegalStateException("Wi-Fi Direct not supported on this device"))
-        val chan = ensureChannel() ?: return Result.failure(IllegalStateException("Wi-Fi Direct channel unavailable"))
+        val manager = p2pManager
+        if (manager == null) {
+            val msg = "Wi-Fi Direct not supported on this device"
+            Log.e(TAG, msg)
+            _connectionState.value = ConnectionState.Failed(msg)
+            return Result.failure(IllegalStateException(msg))
+        }
 
+        val chan = ensureChannel()
+        if (chan == null) {
+            val msg = "Wi-Fi Direct channel unavailable"
+            Log.e(TAG, msg)
+            _connectionState.value = ConnectionState.Failed(msg)
+            return Result.failure(IllegalStateException(msg))
+        }
+        Log.d(TAG, "P2P channel validated successfully: $chan")
+
+        // Stop prior discovery first to clear BUSY state, then start discovery cleanly
+        manager.stopPeerDiscovery(chan, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.d(TAG, "stopPeerDiscovery succeeded before scan, initiating discoverPeers()")
+                initiateDiscoverPeers(manager, chan)
+            }
+            override fun onFailure(reason: Int) {
+                Log.d(TAG, "stopPeerDiscovery failed ($reason) before scan, initiating discoverPeers() anyway")
+                initiateDiscoverPeers(manager, chan)
+            }
+        })
+
+        return Result.success(Unit)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun initiateDiscoverPeers(manager: WifiP2pManager, chan: WifiP2pManager.Channel) {
         manager.discoverPeers(chan, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Log.i(TAG, "discoverPeers started successfully")
+                Log.i(TAG, "discoverPeers() reported SUCCESS: peer discovery active")
                 _connectionState.value = ConnectionState.Discovering
-                chan.let { c ->
-                    manager.requestPeers(c, this@WifiDirectTransport)
-                }
+                manager.requestPeers(chan, this@WifiDirectTransport)
             }
 
             override fun onFailure(reasonCode: Int) {
                 val msg = when (reasonCode) {
                     WifiP2pManager.P2P_UNSUPPORTED -> "Wi-Fi Direct not supported"
                     WifiP2pManager.BUSY -> "Wi-Fi Direct busy. Please retry in a few seconds."
-                    WifiP2pManager.ERROR -> "Discovery failed. Ensure Wi-Fi and Location are ON."
+                    WifiP2pManager.ERROR -> "Discovery failed (code 0). Ensure Wi-Fi and Location are ON."
                     else -> "Discovery error code: $reasonCode"
                 }
-                Log.e(TAG, "discoverPeers failed: $msg ($reasonCode)")
+                Log.e(TAG, "discoverPeers() reported FAILURE: $msg (reasonCode=$reasonCode)")
                 _connectionState.value = ConnectionState.Failed(msg)
             }
         })
-        return Result.success(Unit)
     }
 
     @SuppressLint("MissingPermission")
     override fun stopDiscovery() {
+        Log.i(TAG, "stopDiscovery() called")
         val chan = ensureChannel() ?: return
-        p2pManager?.stopPeerDiscovery(chan, null)
+        p2pManager?.stopPeerDiscovery(chan, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Log.d(TAG, "stopPeerDiscovery succeeded")
+            }
+            override fun onFailure(reason: Int) {
+                Log.d(TAG, "stopPeerDiscovery failed ($reason)")
+            }
+        })
         if (_connectionState.value is ConnectionState.Discovering) {
             _connectionState.value = ConnectionState.Disconnected
         }

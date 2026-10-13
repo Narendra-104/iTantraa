@@ -298,18 +298,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         transportPeersJob?.cancel()
         transportPeersJob = viewModelScope.launch {
-            activeTransport.discoveredPeers.collect { discoveredPeers.value = it }
+            activeTransport.discoveredPeers.collect { peers ->
+                android.util.Log.i("WifiDirectTransport", "MainViewModel: activeTransport (${activeTransport.transportType}) discoveredPeers updated with ${peers.size} peer(s)")
+                peers.forEach { p ->
+                    android.util.Log.d("WifiDirectTransport", "  -> MainViewModel peer: id=${p.id}, name=${p.name}, address=${p.address}")
+                }
+                discoveredPeers.value = peers
+            }
         }
     }
 
     fun startDiscovery() {
+        android.util.Log.i("WifiDirectTransport", "MainViewModel: startDiscovery() invoked on transport ${activeTransport.transportType}")
         val res = activeTransport.startDiscovery()
         if (res.isFailure) {
-            connectionState.value = ConnectionState.Failed(res.exceptionOrNull()?.message ?: "Unknown error")
+            val err = res.exceptionOrNull()?.message ?: "Unknown error"
+            android.util.Log.e("WifiDirectTransport", "MainViewModel: startDiscovery() failed: $err")
+            connectionState.value = ConnectionState.Failed(err)
+        } else {
+            android.util.Log.i("WifiDirectTransport", "MainViewModel: startDiscovery() returned success")
         }
     }
 
     fun stopDiscovery() {
+        android.util.Log.i("WifiDirectTransport", "MainViewModel: stopDiscovery() invoked")
         activeTransport.stopDiscovery()
     }
 
