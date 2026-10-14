@@ -30,5 +30,14 @@ enum class Language(
         fun fromOrdinal(ordinal: Int): Language {
             return entries.getOrNull(ordinal) ?: ENGLISH
         }
+
+        fun fromDisplayName(name: String?): Language {
+            if (name.isNullOrBlank()) return ENGLISH
+            return entries.firstOrNull {
+                it.displayName.equals(name, ignoreCase = true) ||
+                it.name.equals(name, ignoreCase = true) ||
+                it.code.equals(name, ignoreCase = true)
+            } ?: ENGLISH
+        }
     }
 }

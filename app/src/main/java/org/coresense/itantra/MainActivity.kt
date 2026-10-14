@@ -41,6 +41,7 @@ enum class AppState {
 
 enum class NavigationTab(val title: String, val icon: ImageVector) {
     AUDIO("Audio", Icons.Default.Mic),
+    DIAL("Dial", Icons.Default.Call),
     EMERGENCY_SOS("SOS", Icons.Default.Emergency),
     TRACK_ME("Track Me", Icons.Default.LocationOn),
     CHATS("Chats", Icons.Default.Chat)
@@ -386,6 +387,7 @@ fun MainAppScaffold(
                         viewModel = viewModel,
                         onOpenSettings = { inSettingsScreen = true }
                     )
+                    NavigationTab.DIAL -> DialScreen(viewModel = viewModel)
                     NavigationTab.EMERGENCY_SOS -> SosScreen(viewModel = viewModel)
                     NavigationTab.TRACK_ME -> TrackMeScreen(viewModel = viewModel)
                     NavigationTab.CHATS -> ChatsScreen(viewModel = viewModel)

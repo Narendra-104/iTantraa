@@ -215,7 +215,7 @@ class ReliabilityEngine(
                         updateStats()
                     }
 
-                    PacketType.DATA, PacketType.SOS -> {
+                    PacketType.DATA, PacketType.SOS, PacketType.LOCATION -> {
                         // Send ACK back immediately
                         sendAck(packet)
 

@@ -10,6 +10,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.QuestionAnswer
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextAlign
 import org.coresense.itantra.link.ConnectionState
+import org.coresense.itantra.protocol.Language
 import org.coresense.itantra.protocol.PacketPriority
 import org.coresense.itantra.ui.MainViewModel
 import org.coresense.itantra.ui.theme.DarkSurface
@@ -33,6 +37,9 @@ fun ChatsScreen(viewModel: MainViewModel) {
     val messages by viewModel.messages.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val discoveredPeers by viewModel.discoveredPeers.collectAsState()
+    val isAutoTts by viewModel.isAutoTtsEnabled.collectAsState()
+    val isTtsSpeaking by viewModel.isTtsSpeaking.collectAsState()
+    val currentlyPlayingId by viewModel.currentlyPlayingMessageId.collectAsState()
     val connectedPeer = (connectionState as? ConnectionState.Connected)?.peer
 
     var inputText by remember { mutableStateOf("") }
@@ -77,9 +84,10 @@ fun ChatsScreen(viewModel: MainViewModel) {
     val resolvedDept = remember(selectedRecipient) { viewModel.resolveDepartmentId(selectedRecipient) }
 
     val filteredMessages = remember(messages, selectedRecipient, currentConversationId, resolvedDept, myDeviceId) {
+        val baseMessages = messages.filter { !it.text.startsWith("[TRACK-ME]") }
         when (selectedRecipient) {
-            "ALL" -> messages
-            "GLOBAL" -> messages.filter { msg ->
+            "ALL" -> baseMessages
+            "GLOBAL" -> baseMessages.filter { msg ->
                 // In GLOBAL channel, display:
                 // 1. Broadcast messages (receiverId is null or "GLOBAL")
                 // 2. Direct incoming messages addressed to this device (so incoming messages are never missed!)
@@ -89,7 +97,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
                 val isMyBroadcast = !msg.isIncoming && isBroadcast
                 isBroadcast || isDirectToMe || isMyBroadcast
             }
-            else -> messages.filter { msg ->
+            else -> baseMessages.filter { msg ->
                 (currentConversationId != null && msg.conversationId == currentConversationId) ||
                 (resolvedDept != null && msg.departmentId.equals(resolvedDept, ignoreCase = true)) ||
                 msg.receiverId.equals(selectedRecipient, ignoreCase = true) ||
@@ -147,13 +155,14 @@ fun ChatsScreen(viewModel: MainViewModel) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Header
-        Box(
+        // Header with Title and Auto-Read Toggle
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(DarkSurface)
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "CHAT",
@@ -161,6 +170,36 @@ fun ChatsScreen(viewModel: MainViewModel) {
                 fontWeight = FontWeight.Bold,
                 color = Color.White
             )
+
+            // Auto-Read Toggle Button
+            Surface(
+                color = if (isAutoTts) PrimaryNeonGreen.copy(alpha = 0.15f) else Color.DarkGray.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isAutoTts) PrimaryNeonGreen else Color.Gray
+                ),
+                modifier = Modifier.clickable { viewModel.toggleAutoTts() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (isAutoTts) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                        contentDescription = if (isAutoTts) "Disable Auto-Read" else "Enable Auto-Read",
+                        tint = if (isAutoTts) PrimaryNeonGreen else Color.LightGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isAutoTts) "Auto-Read: ON" else "Auto-Read: OFF",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isAutoTts) PrimaryNeonGreen else Color.LightGray
+                    )
+                }
+            }
         }
         
         // Recipient Selection
@@ -197,6 +236,54 @@ fun ChatsScreen(viewModel: MainViewModel) {
         }
         
         Divider(color = Color.Gray)
+
+        // Active Speech Status Banner (if TTS is speaking)
+        if (isTtsSpeaking) {
+            Surface(
+                color = Color(0xFF1E3A1E),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, PrimaryNeonGreen),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VolumeUp,
+                            contentDescription = null,
+                            tint = PrimaryNeonGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Speaking message...",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Button(
+                        onClick = { viewModel.stopPlayback() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = "Stop", modifier = Modifier.size(14.dp), tint = Color.White)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("STOP", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
+            }
+        }
 
         // Chat History
         if (filteredMessages.isEmpty()) {
@@ -272,28 +359,65 @@ fun ChatsScreen(viewModel: MainViewModel) {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = timeFormat.format(Date(msg.timestamp)),
-                                        color = Color.Gray,
-                                        fontSize = 12.sp
-                                    )
-                                    if (isMine) {
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        val (statusText, statusColor) = when (msg.deliveryState) {
-                                            "DELIVERED", "ACKNOWLEDGED" -> Pair("✓✓ Delivered", PrimaryNeonGreen)
-                                            "SENT" -> Pair("✓ Sent", Color.LightGray)
-                                            "QUEUED", "SENDING" -> Pair("⏳ Sending", Color.Gray)
-                                            "FAILED" -> Pair("✗ Failed", Color.Red)
-                                            else -> Pair(msg.deliveryState, Color.Gray)
+                                    val isPlayingThis = currentlyPlayingId == msg.msgId
+                                    Surface(
+                                        color = if (isPlayingThis) PrimaryNeonGreen.copy(alpha = 0.25f) else Color.Black.copy(alpha = 0.35f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (isPlayingThis) PrimaryNeonGreen else Color.Gray.copy(alpha = 0.5f)
+                                        ),
+                                        modifier = Modifier
+                                            .clickable {
+                                                val msgLang = Language.fromDisplayName(msg.lang)
+                                                viewModel.togglePlayMessage(msg.msgId, msg.text, msgLang)
+                                            }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.VolumeUp,
+                                                contentDescription = if (isPlayingThis) "Stop Reading" else "Read Aloud",
+                                                tint = if (isPlayingThis) PrimaryNeonGreen else Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (isPlayingThis) "Stop" else "Read",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isPlayingThis) PrimaryNeonGreen else Color.White
+                                            )
                                         }
+                                    }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            text = statusText,
-                                            color = statusColor,
-                                            fontSize = 11.sp
+                                            text = timeFormat.format(Date(msg.timestamp)),
+                                            color = Color.Gray,
+                                            fontSize = 12.sp
                                         )
+                                        if (isMine) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            val (statusText, statusColor) = when (msg.deliveryState) {
+                                                "DELIVERED", "ACKNOWLEDGED" -> Pair("✓✓ Delivered", PrimaryNeonGreen)
+                                                "SENT" -> Pair("✓ Sent", Color.LightGray)
+                                                "QUEUED", "SENDING" -> Pair("⏳ Sending", Color.Gray)
+                                                "FAILED" -> Pair("✗ Failed", Color.Red)
+                                                else -> Pair(msg.deliveryState, Color.Gray)
+                                            }
+                                            Text(
+                                                text = statusText,
+                                                color = statusColor,
+                                                fontSize = 11.sp
+                                            )
+                                        }
                                     }
                                 }
                             }

@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import org.coresense.itantra.identity.Role
+import org.coresense.itantra.protocol.Language
 import org.coresense.itantra.protocol.PacketPriority
 import org.coresense.itantra.storage.MessageEntity
 import org.coresense.itantra.ui.MainViewModel
@@ -41,7 +42,7 @@ fun ReceiverScreen(
     onNavigateBack: () -> Unit = {}
 ) {
     val messages by viewModel.messages.collectAsState()
-    val isPlaying = viewModel.activePipelineStage.collectAsState().value == "TTS"
+    val currentlyPlayingId by viewModel.currentlyPlayingMessageId.collectAsState()
     val identityState by viewModel.identityRepository.userIdentity.collectAsState()
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val coroutineScope = rememberCoroutineScope()
@@ -245,18 +246,18 @@ fun ReceiverScreen(
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val isPlayingThis = currentlyPlayingId == req.msgId
                                     IconButton(
                                         onClick = {
-                                            coroutineScope.launch {
-                                                viewModel.ttsEngine.speak(req.text, org.coresense.itantra.protocol.Language.ENGLISH)
-                                            }
+                                            val msgLang = Language.fromDisplayName(req.lang)
+                                            viewModel.togglePlayMessage(req.msgId, req.text, msgLang)
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.VolumeUp,
-                                            contentDescription = "Read Audio",
-                                            tint = if (isPlaying) PrimaryNeonGreen else Color.Gray,
+                                            contentDescription = if (isPlayingThis) "Stop Audio" else "Read Audio",
+                                            tint = if (isPlayingThis) PrimaryNeonGreen else Color.Gray,
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }

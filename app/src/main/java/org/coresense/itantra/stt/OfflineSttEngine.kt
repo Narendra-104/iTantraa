@@ -295,7 +295,7 @@ class OfflineSttEngine(
         val cleaned = raw.replace(Regex("\\s+"), " ").trim()
         val lang = currentLang ?: Language.ENGLISH
         return if (lang == Language.ENGLISH) {
-            cleaned.lowercase()
+            EnglishSpeechNormalizer.normalize(cleaned)
         } else {
             cleaned
         }

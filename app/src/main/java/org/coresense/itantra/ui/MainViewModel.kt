@@ -48,6 +48,7 @@ import org.coresense.itantra.reliability.ReliabilityEngine
 import org.coresense.itantra.reliability.ReliabilityStats
 import org.coresense.itantra.sentence.SentenceAssembler
 import org.coresense.itantra.storage.MessageEntity
+import org.coresense.itantra.stt.EnglishSpeechNormalizer
 import org.coresense.itantra.stt.LanguageModelRegistry
 import org.coresense.itantra.stt.ModelDownloadManager
 import org.coresense.itantra.stt.ModelMetadata
@@ -55,6 +56,7 @@ import org.coresense.itantra.stt.OfflineSttEngine
 import org.coresense.itantra.stt.SttEngine
 import org.coresense.itantra.tts.OfflineAndroidTtsEngine
 import org.coresense.itantra.tts.TtsEngine
+import org.coresense.itantra.tts.TtsStatus
 import org.coresense.itantra.vad.SileroVadDetector
 import org.coresense.itantra.vad.VadEvent
 import org.coresense.itantra.identity.Department
@@ -189,13 +191,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lastReductionPercent = MutableStateFlow(0f)
     private var trackMeJob: Job? = null
 
+    private val _trackedPeers = MutableStateFlow<Map<String, TrackedPeer>>(emptyMap())
+    val trackedPeers: StateFlow<Map<String, TrackedPeer>> = _trackedPeers.asStateFlow()
+
+    // Step 13: Dial Hands-Free Speech-over-Packet Call States
+    val isCallActive = MutableStateFlow(false)
+    val activeCallPeerId = MutableStateFlow<String?>(null)
+    val isCallMuted = MutableStateFlow(false)
+    val callDurationSeconds = MutableStateFlow(0)
+    val callStatusMessage = MutableStateFlow("Ready to call")
+    val callTranscripts = MutableStateFlow<List<Pair<String, String>>>(emptyList())
+    private var callJob: Job? = null
+    private var callTimerJob: Job? = null
+
     val sosHistory: StateFlow<List<org.coresense.itantra.storage.MessageEntity>> = messageRepository.getAllMessages()
         .map { list -> list.filter { it.priority == "SOS" || it.priority == "URGENT" } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private var audioCaptureJob: Job? = null
     private var sosCountdownJob: Job? = null
-    private var pttAudioBuffer = mutableListOf<Short>()
+    private val pttAudioFrames = java.util.concurrent.ConcurrentLinkedQueue<ShortArray>()
 
     init {
         // Auto-load Silero VAD ONNX model from assets
@@ -242,11 +257,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Periodic system metric measurement (RAM, CPU, Battery)
-        viewModelScope.launch(Dispatchers.IO) {
-            while (true) {
-                metricsCollector.measureSystemMetrics()
-                delay(2000)
+        // Step 13: Automatically end call if transport link disconnects
+        viewModelScope.launch {
+            connectionState.collect { state ->
+                if (state !is ConnectionState.Connected && isCallActive.value) {
+                    callStatusMessage.value = "Call ended: transport disconnected"
+                    endCall()
+                }
             }
         }
     }
@@ -414,19 +431,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         liveTranscript.value = "Listening..."
         TransmissionService.start(context, "Walkie-Talkie Transmitting")
 
-        synchronized(pttAudioBuffer) {
-            pttAudioBuffer.clear()
-        }
+        pttAudioFrames.clear()
         audioRecorder.start(viewModelScope)
 
         audioCaptureJob?.cancel()
         audioCaptureJob = viewModelScope.launch(Dispatchers.IO) {
             audioRecorder.audioFrames.collect { frame ->
-                synchronized(pttAudioBuffer) {
-                    for (sample in frame) {
-                        pttAudioBuffer.add(sample)
-                    }
-                }
+                pttAudioFrames.add(frame)
             }
         }
     }
@@ -434,17 +445,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onPttReleased() {
         if (!isWalkieTalkieMode.value) return
         viewModelScope.launch(Dispatchers.IO) {
-            delay(150) // Allow trailing audio frame to complete and avoid clipping word ending
+            delay(300) // Allow trailing audio frame to complete and avoid clipping word ending
             audioCaptureJob?.cancel()
             audioCaptureJob = null
             audioRecorder.stop()
             TransmissionService.stop(context)
 
-            val capturedSamples: ShortArray
-            synchronized(pttAudioBuffer) {
-                capturedSamples = pttAudioBuffer.toShortArray()
-                pttAudioBuffer.clear()
+            val totalSamples = pttAudioFrames.sumOf { it.size }
+            val capturedSamples = ShortArray(totalSamples)
+            var offset = 0
+            while (pttAudioFrames.isNotEmpty()) {
+                val frame = pttAudioFrames.poll() ?: break
+                System.arraycopy(frame, 0, capturedSamples, offset, frame.size)
+                offset += frame.size
             }
+            pttAudioFrames.clear()
 
             if (capturedSamples.isEmpty()) {
                 activePipelineStage.value = "IDLE"
@@ -499,9 +514,257 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sendTextMessage(textToSend, PacketPriority.NORMAL)
     }
 
+    // -------------------------------------------------------------------------
+    // Step 11: Centralized Offline Text-To-Speech (TTS) Control State
+    // -------------------------------------------------------------------------
+    val isAutoTtsEnabled = MutableStateFlow(true)
+    val isTtsSpeaking = MutableStateFlow(false)
+    val currentlyPlayingMessageId = MutableStateFlow<Long?>(null)
+    val ttsStatusMessage = MutableStateFlow<String?>("Offline TTS Ready")
+    private var activePlaybackJob: Job? = null
+
+    fun toggleAutoTts(enabled: Boolean? = null) {
+        val next = enabled ?: !isAutoTtsEnabled.value
+        isAutoTtsEnabled.value = next
+        if (!next) {
+            stopPlayback()
+        }
+    }
+
+    fun togglePlayMessage(msgId: Long, text: String, lang: Language = selectedLanguage.value) {
+        if (currentlyPlayingMessageId.value == msgId) {
+            stopPlayback()
+            return
+        }
+
+        stopPlayback()
+
+        activePlaybackJob = viewModelScope.launch(Dispatchers.Main) {
+            currentlyPlayingMessageId.value = msgId
+            isTtsSpeaking.value = true
+            activePipelineStage.value = "TTS"
+            try {
+                val status = ttsEngine.isLanguageAvailable(lang)
+                if (status != TtsStatus.SYSTEM_TTS_OFFLINE && status != TtsStatus.OFFLINE_READY) {
+                    ttsStatusMessage.value = "No offline voice for ${lang.displayName} ($status). Cloud fallback disabled."
+                    return@launch
+                }
+                ttsStatusMessage.value = "Reading message aloud..."
+                val res = ttsEngine.speak(text, lang, isEmergency = false)
+                if (res.isFailure) {
+                    ttsStatusMessage.value = res.exceptionOrNull()?.message ?: "TTS playback error"
+                }
+            } catch (e: Exception) {
+                ttsStatusMessage.value = "TTS playback error: ${e.message}"
+                try { android.util.Log.w("MainViewModel", "Speech playback error: ${e.message}") } catch (_: Throwable) {}
+            } finally {
+                if (currentlyPlayingMessageId.value == msgId) {
+                    currentlyPlayingMessageId.value = null
+                    isTtsSpeaking.value = false
+                    activePipelineStage.value = "IDLE"
+                }
+            }
+        }
+    }
+
+    fun stopPlayback() {
+        activePlaybackJob?.cancel()
+        activePlaybackJob = null
+        ttsEngine.stop()
+        currentlyPlayingMessageId.value = null
+        isTtsSpeaking.value = false
+        activePipelineStage.value = "IDLE"
+    }
+
+    fun testOfflineVoice(lang: Language = selectedLanguage.value) {
+        stopPlayback()
+        val testPhrase = when (lang) {
+            Language.HINDI -> "नमस्ते, यह आई-तंत्रा का ऑफ़लाइन वाक् परीक्षण है।"
+            Language.MARATHI -> "नमस्कार, ही आय-तंतराची ऑफलाइन चाचणी आहे."
+            Language.BENGALI -> "নমস্কার, এটি আই-তন্ত্রের অফলাইন বক্তৃতা পরীক্ষা।"
+            Language.TAMIL -> "வணக்கம், இது ஐ-தந்த்ராவின் ஆஃப்லைன் குரல் சோதனை."
+            Language.TELUGU -> "నమస్కారం, ఇది ఐ-తంత్ర ఆఫ్ లైన్ వాయిస్ పరీక్ష."
+            Language.GUJARATI -> "નમસ્તે, આ આઇ-તંત્રનું ઑફલાઇન વૉઇસ ટેસ્ટ છે."
+            Language.KANNADA -> "ನಮಸ್ಕಾರ, ಇದು ಐ-ತಂತ್ರದ ಆಫ್‌ಲೈನ್ ಧ್ವನಿ ಪರೀಕ್ಷೆ."
+            Language.MALAYALAM -> "നമസ്കാരം, ഇത് ഐ-തന്ത്ര ഓഫ്‌ലൈൻ ശബ്ദ പരിശോധനയാണ്."
+            Language.PUNJABI -> "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ, ਇਹ ਆਈ-ਤੰਤਰਾ ਦਾ ਔਫਲਾਈਨ ਵੌਇਸ ਟੈਸਟ ਹੈ।"
+            Language.ODIA -> "ନମସ୍କାର, ଏହା ଆଇ-ତନ୍ତ୍ରାର ଅଫଲାଇନ ଭଏସ ପରୀକ୍ଷଣ।"
+            else -> "This is an offline text to speech test on iTantra."
+        }
+        activePlaybackJob = viewModelScope.launch(Dispatchers.Main) {
+            isTtsSpeaking.value = true
+            activePipelineStage.value = "TTS"
+            ttsStatusMessage.value = "Testing offline voice for ${lang.displayName}..."
+            val res = ttsEngine.speak(testPhrase, lang, isEmergency = false)
+            if (res.isSuccess) {
+                ttsStatusMessage.value = "Voice test completed successfully for ${lang.displayName}."
+            } else {
+                ttsStatusMessage.value = res.exceptionOrNull()?.message ?: "Voice test failed for ${lang.displayName}"
+            }
+            isTtsSpeaking.value = false
+            activePipelineStage.value = "IDLE"
+        }
+    }
+
     fun cancelReadBack() {
         readBackPendingText.value = null
-        ttsEngine.stop()
+        stopPlayback()
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 13: Dial / Hands-Free Speech-over-Packet Call Session
+    // -------------------------------------------------------------------------
+
+    fun startCall(targetPeerId: String) {
+        val trimmed = targetPeerId.trim()
+        if (trimmed.isBlank() || trimmed.equals("GLOBAL", ignoreCase = true) || trimmed.equals("ALL", ignoreCase = true)) {
+            callStatusMessage.value = "Please select a specific peer device to call"
+            return
+        }
+
+        if (isCallActive.value) return
+
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            callStatusMessage.value = "Microphone permission required for call"
+            return
+        }
+
+        val conn = connectionState.value
+        if (conn !is ConnectionState.Connected) {
+            callStatusMessage.value = "No active peer connection. Connect over Bluetooth or Wi-Fi first."
+            return
+        }
+
+        // Pre-initialize STT model for current language if not loaded
+        if (!sttEngine.isLanguageLoaded(selectedLanguage.value)) {
+            viewModelScope.launch {
+                val initRes = sttEngine.initialize(selectedLanguage.value)
+                if (initRes.isFailure) {
+                    callStatusMessage.value = "STT model unavailable: ${initRes.exceptionOrNull()?.message}"
+                }
+            }
+        }
+
+        isCallActive.value = true
+        activeCallPeerId.value = trimmed
+        isCallMuted.value = false
+        callDurationSeconds.value = 0
+        callStatusMessage.value = "Connected with $trimmed"
+        callTranscripts.value = emptyList()
+
+        TransmissionService.start(context)
+
+        // 1. Duration timer
+        callTimerJob?.cancel()
+        callTimerJob = viewModelScope.launch {
+            while (isActive && isCallActive.value) {
+                delay(1000)
+                if (isCallActive.value) {
+                    callDurationSeconds.value += 1
+                }
+            }
+        }
+
+        // 2. Start AudioRecorder in continuous mode
+        val startRes = audioRecorder.start(viewModelScope)
+        if (startRes.isFailure) {
+            callStatusMessage.value = "Mic start failed: ${startRes.exceptionOrNull()?.message}"
+            endCall()
+            return
+        }
+
+        // 3. Reset VAD
+        vadDetector.resetState()
+
+        // 4. Continuous VAD frame processing loop
+        callJob?.cancel()
+        callJob = viewModelScope.launch(Dispatchers.IO) {
+            audioRecorder.audioFrames.collect { frame ->
+                if (!isCallActive.value) return@collect
+                if (isCallMuted.value) return@collect // Audio silenced while muted
+
+                val vadEvent = vadDetector.processFrame(frame)
+                when (vadEvent) {
+                    is VadEvent.SpeechStarted -> {
+                        if (isCallActive.value && !isCallMuted.value) {
+                            callStatusMessage.value = "Speaking..."
+                            activePipelineStage.value = "MIC"
+                        }
+                    }
+                    is VadEvent.SpeechActive -> {
+                        // speech in progress
+                    }
+                    is VadEvent.SpeechEnded -> {
+                        val completeAudio = vadEvent.completeUtterance
+                        if (completeAudio.isNotEmpty() && isCallActive.value && !isCallMuted.value) {
+                            callStatusMessage.value = "Transcribing..."
+                            activePipelineStage.value = "STT"
+                            processAndSendCallSegment(completeAudio, trimmed)
+                            if (isCallActive.value && !isCallMuted.value) {
+                                callStatusMessage.value = "Connected with $trimmed"
+                                activePipelineStage.value = "IDLE"
+                            }
+                        }
+                    }
+                    is VadEvent.Silence -> {
+                        // quiet
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun processAndSendCallSegment(audioSamples: ShortArray, targetPeerId: String) {
+        if (!isCallActive.value || isCallMuted.value) return
+
+        if (!sttEngine.isLanguageLoaded(selectedLanguage.value)) {
+            val initRes = sttEngine.initialize(selectedLanguage.value)
+            if (initRes.isFailure) return
+        }
+
+        val sttRes = sttEngine.transcribe(audioSamples)
+        if (sttRes.isSuccess) {
+            val raw = sttRes.getOrThrow().text.trim()
+            if (raw.isNotBlank()) {
+                val normalized = if (selectedLanguage.value == Language.ENGLISH) {
+                    EnglishSpeechNormalizer.normalize(raw)
+                } else {
+                    raw
+                }
+
+                if (normalized.isNotBlank()) {
+                    val currentList = callTranscripts.value.toMutableList()
+                    currentList.add(Pair("Me", normalized))
+                    callTranscripts.value = currentList
+
+                    sendTextMessage(
+                        text = normalized,
+                        priority = PacketPriority.NORMAL,
+                        receiverId = targetPeerId
+                    )
+                }
+            }
+        }
+    }
+
+    fun toggleCallMute() {
+        val next = !isCallMuted.value
+        isCallMuted.value = next
+        callStatusMessage.value = if (next) "Microphone Muted" else "Connected with ${activeCallPeerId.value}"
+    }
+
+    fun endCall() {
+        isCallActive.value = false
+        activeCallPeerId.value = null
+        isCallMuted.value = false
+        callTimerJob?.cancel()
+        callTimerJob = null
+        callJob?.cancel()
+        callJob = null
+        audioRecorder.stop()
+        vadDetector.resetState()
+        TransmissionService.stop(context)
+        callStatusMessage.value = "Call ended"
     }
 
     fun sendTextMessage(
@@ -538,6 +801,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val gps = gpsState.value
         val latMicro = (gps as? GpsState.Fix)?.let { (it.latitude * 1_000_000).toInt() }
         val lonMicro = (gps as? GpsState.Fix)?.let { (it.longitude * 1_000_000).toInt() }
+        val accMeters = (gps as? GpsState.Fix)?.accuracyMeters
 
         val msgId = (System.currentTimeMillis() shl 16) or (UUID.randomUUID().hashCode().toLong() and 0xFFFFL)
         val seq = reliabilityEngine.nextSequenceNumber()
@@ -557,6 +821,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             timestamp = System.currentTimeMillis(),
             latitudeMicrodegrees = latMicro,
             longitudeMicrodegrees = lonMicro,
+            accuracyMeters = accMeters,
             type = type
         )
 
@@ -571,36 +836,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         activePipelineStage.value = "TX"
 
-        // Save locally to Room DB
+        // Save locally to Room DB (skip pure telemetry LOCATION packets from polluting Chat DB)
         viewModelScope.launch(Dispatchers.IO) {
-            val conv = ConversationEntity(
-                conversationId = convId,
-                localDeviceId = myDeviceId,
-                participantId = targetReceiver ?: resolvedDept,
-                departmentId = targetDeptId,
-                createdAt = packet.timestamp,
-                updatedAt = packet.timestamp
-            )
-            messageRepository.insertConversation(conv)
-
-            messageRepository.insertMessage(
-                MessageEntity(
-                    msgId = packet.msgId,
-                    senderId = packet.senderId,
-                    seq = packet.seq,
-                    lang = packet.lang.displayName,
-                    priority = packet.priority.name,
-                    text = packet.text,
-                    receiverId = packet.receiverId,
-                    departmentId = packet.departmentId,
-                    conversationId = packet.conversationId,
-                    timestamp = packet.timestamp,
-                    latitudeMicrodegrees = packet.latitudeMicrodegrees,
-                    longitudeMicrodegrees = packet.longitudeMicrodegrees,
-                    deliveryState = "QUEUED",
-                    isIncoming = false
+            if (packet.type != PacketType.LOCATION) {
+                val conv = ConversationEntity(
+                    conversationId = convId,
+                    localDeviceId = myDeviceId,
+                    participantId = targetReceiver ?: resolvedDept,
+                    departmentId = targetDeptId,
+                    createdAt = packet.timestamp,
+                    updatedAt = packet.timestamp
                 )
-            )
+                messageRepository.insertConversation(conv)
+
+                messageRepository.insertMessage(
+                    MessageEntity(
+                        msgId = packet.msgId,
+                        senderId = packet.senderId,
+                        seq = packet.seq,
+                        lang = packet.lang.displayName,
+                        priority = packet.priority.name,
+                        text = packet.text,
+                        receiverId = packet.receiverId,
+                        departmentId = packet.departmentId,
+                        conversationId = packet.conversationId,
+                        timestamp = packet.timestamp,
+                        latitudeMicrodegrees = packet.latitudeMicrodegrees,
+                        longitudeMicrodegrees = packet.longitudeMicrodegrees,
+                        deliveryState = "QUEUED",
+                        isIncoming = false
+                    )
+                )
+            }
             reliabilityEngine.enqueue(packet)
         }
     }
@@ -656,23 +923,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun toggleTrackMe() {
-        val next = !isTrackMeActive.value
-        isTrackMeActive.value = next
-        if (next) {
-            trackMeJob = viewModelScope.launch {
-                while (isActive && isTrackMeActive.value) {
-                    val gps = gpsState.value
-                    if (gps is GpsState.Fix) {
-                        val beaconText = "[TRACK-ME] Position: ${String.format("%.5f, %.5f", gps.latitude, gps.longitude)} (±${gps.accuracyMeters.toInt()}m)"
-                        sendTextMessage(beaconText, PacketPriority.URGENT)
-                    }
-                    delay(30_000)
+    fun startTrackMe(targetRecipient: String = "GLOBAL", intervalMs: Long = 15_000L) {
+        if (isTrackMeActive.value) return
+        isTrackMeActive.value = true
+        gpsProvider.startContinuousUpdates(intervalMs = intervalMs)
+
+        trackMeJob?.cancel()
+        trackMeJob = viewModelScope.launch {
+            // Immediate transmission of current fix if ready
+            sendLocationBeacon(targetRecipient)
+
+            while (isActive && isTrackMeActive.value) {
+                delay(intervalMs)
+                if (isActive && isTrackMeActive.value) {
+                    sendLocationBeacon(targetRecipient)
                 }
             }
+        }
+    }
+
+    fun stopTrackMe() {
+        isTrackMeActive.value = false
+        trackMeJob?.cancel()
+        trackMeJob = null
+        gpsProvider.stopContinuousUpdates()
+    }
+
+    fun toggleTrackMe(targetRecipient: String = "GLOBAL") {
+        if (isTrackMeActive.value) {
+            stopTrackMe()
         } else {
-            trackMeJob?.cancel()
-            trackMeJob = null
+            startTrackMe(targetRecipient)
+        }
+    }
+
+    fun sendLocationBeacon(targetRecipient: String = "GLOBAL") {
+        val gps = gpsState.value
+        if (gps is GpsState.Fix) {
+            val lat = gps.latitude
+            val lon = gps.longitude
+            val acc = gps.accuracyMeters
+            val beaconText = "[TRACK-ME] Lat: ${String.format(java.util.Locale.US, "%.5f", lat)}, Lon: ${String.format(java.util.Locale.US, "%.5f", lon)} (±${acc.toInt()}m)"
+            sendTextMessage(
+                text = beaconText,
+                priority = PacketPriority.URGENT,
+                receiverId = if (targetRecipient == "GLOBAL" || targetRecipient == "ALL") null else targetRecipient,
+                packetType = PacketType.LOCATION
+            )
         }
     }
 
@@ -773,6 +1070,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        if (packet.hasValidCoordinates()) {
+            val lat = packet.latitudeDegrees!!
+            val lon = packet.longitudeDegrees!!
+            val currentMap = _trackedPeers.value.toMutableMap()
+            currentMap[packet.senderId] = TrackedPeer(
+                deviceId = packet.senderId,
+                latitude = lat,
+                longitude = lon,
+                accuracyMeters = packet.accuracyMeters,
+                timestamp = packet.timestamp,
+                lastReceivedTime = System.currentTimeMillis()
+            )
+            _trackedPeers.value = currentMap
+        }
+
         val convId = when {
             !packet.conversationId.isNullOrBlank() -> packet.conversationId
             targetDeptId != null -> getConversationId(packet.senderId, targetDeptId)
@@ -782,46 +1094,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             activePipelineStage.value = "DECODE"
 
-            // Save or update Conversation
-            val conv = ConversationEntity(
-                conversationId = convId,
-                localDeviceId = myDeviceId,
-                participantId = packet.senderId,
-                departmentId = targetDeptId,
-                createdAt = packet.timestamp,
-                updatedAt = packet.timestamp
-            )
-            messageRepository.insertConversation(conv)
-
-            // Save to Room DB
-            messageRepository.insertMessage(
-                MessageEntity(
-                    msgId = packet.msgId,
-                    senderId = packet.senderId,
-                    seq = packet.seq,
-                    lang = packet.lang.displayName,
-                    priority = packet.priority.name,
-                    text = packet.text,
-                    receiverId = packet.receiverId,
-                    departmentId = targetDeptId,
+            // Save or update Conversation & Message in Room DB (skip pure telemetry LOCATION packets from polluting Chat DB)
+            if (packet.type != PacketType.LOCATION) {
+                val conv = ConversationEntity(
                     conversationId = convId,
-                    timestamp = packet.timestamp,
-                    latitudeMicrodegrees = packet.latitudeMicrodegrees,
-                    longitudeMicrodegrees = packet.longitudeMicrodegrees,
-                    deliveryState = "DELIVERED",
-                    isIncoming = true
+                    localDeviceId = myDeviceId,
+                    participantId = packet.senderId,
+                    departmentId = targetDeptId,
+                    createdAt = packet.timestamp,
+                    updatedAt = packet.timestamp
                 )
-            )
+                messageRepository.insertConversation(conv)
 
-            showNotification(packet)
+                messageRepository.insertMessage(
+                    MessageEntity(
+                        msgId = packet.msgId,
+                        senderId = packet.senderId,
+                        seq = packet.seq,
+                        lang = packet.lang.displayName,
+                        priority = packet.priority.name,
+                        text = packet.text,
+                        receiverId = packet.receiverId,
+                        departmentId = targetDeptId,
+                        conversationId = convId,
+                        timestamp = packet.timestamp,
+                        latitudeMicrodegrees = packet.latitudeMicrodegrees,
+                        longitudeMicrodegrees = packet.longitudeMicrodegrees,
+                        deliveryState = "DELIVERED",
+                        isIncoming = true
+                    )
+                )
+            }
+
+            // If currently in a call with this sender, append to live call transcript
+            if (isCallActive.value && activeCallPeerId.value?.equals(packet.senderId, ignoreCase = true) == true && packet.type != PacketType.LOCATION) {
+                val currentList = callTranscripts.value.toMutableList()
+                currentList.add(Pair(packet.senderId, packet.text))
+                callTranscripts.value = currentList
+            }
+
+            if (packet.type != PacketType.LOCATION) {
+                showNotification(packet)
+            }
 
             // Play voice or trigger SOS alert
-            activePipelineStage.value = "TTS"
-            if (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS) {
+            if (packet.type == PacketType.LOCATION) {
+                // Location telemetry beacons are purely for tracking; do NOT interrupt via TTS
+                activePipelineStage.value = "IDLE"
+            } else if (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS) {
+                activePipelineStage.value = "TTS"
                 val gps = gpsState.value as? GpsState.Fix
                 sosAlertManager.triggerIncomingSosAlert(packet, gps?.latitude, gps?.longitude)
+            } else if (isAutoTtsEnabled.value) {
+                // Auto-read incoming chat or dial speech: track via activePlaybackJob so it updates speaking state and can be stopped cleanly
+                stopPlayback()
+                activePlaybackJob = viewModelScope.launch(Dispatchers.Main) {
+                    currentlyPlayingMessageId.value = packet.msgId
+                    isTtsSpeaking.value = true
+                    activePipelineStage.value = "TTS"
+                    try {
+                        ttsEngine.speak(packet.text, packet.lang)
+                    } catch (e: Exception) {
+                        try { android.util.Log.w("MainViewModel", "Auto-TTS error: ${e.message}") } catch (_: Throwable) {}
+                    } finally {
+                        if (currentlyPlayingMessageId.value == packet.msgId) {
+                            currentlyPlayingMessageId.value = null
+                            isTtsSpeaking.value = false
+                            activePipelineStage.value = "IDLE"
+                        }
+                    }
+                }
             } else {
-                ttsEngine.speak(packet.text, packet.lang)
+                activePipelineStage.value = "IDLE"
             }
         }
     }
@@ -905,11 +1249,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        endCall()
+        stopPlayback()
         audioRecorder.stop()
+        gpsProvider.stopContinuousUpdates()
         activeTransport.close()
         sttEngine.close()
         ttsEngine.close()
         reliabilityEngine.close()
         super.onCleared()
     }
+}
+
+/**
+ * Real-time tracked peer GPS location state.
+ */
+data class TrackedPeer(
+    val deviceId: String,
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Float? = null,
+    val timestamp: Long,
+    val lastReceivedTime: Long = System.currentTimeMillis()
+) {
+    /**
+     * Stale location detection: considered stale if older than 2 minutes (120,000 ms).
+     */
+    val isStale: Boolean
+        get() = (System.currentTimeMillis() - lastReceivedTime) > 120_000L
 }

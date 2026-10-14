@@ -32,6 +32,7 @@ object PacketCodec {
     private const val TAG_RECEIVER_ID = 12
     private const val TAG_DEPARTMENT_ID = 13
     private const val TAG_CONVERSATION_ID = 14
+    private const val TAG_ACCURACY = 15
 
     private const val WIRE_VARINT = 0
     private const val WIRE_LENGTH_DELIMITED = 2
@@ -109,6 +110,12 @@ object PacketCodec {
             out.write(cBytes)
         }
 
+        packet.accuracyMeters?.let { acc ->
+            writeTag(out, TAG_ACCURACY, WIRE_FIXED32)
+            val accBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putFloat(acc)
+            out.write(accBuf.array())
+        }
+
         val rawBytesWithoutCrc = out.toByteArray()
         val calculatedCrc = Crc32Util.calculate(rawBytesWithoutCrc)
 
@@ -139,6 +146,7 @@ object PacketCodec {
             var receiverId: String? = null
             var departmentId: String? = null
             var conversationId: String? = null
+            var accuracyMeters: Float? = null
             var crc32: Long = 0L
 
             var crcOffset = -1
@@ -196,6 +204,11 @@ object PacketCodec {
                         stream.read(buf)
                         conversationId = String(buf, Charsets.UTF_8)
                     }
+                    TAG_ACCURACY -> {
+                        val b = ByteArray(4)
+                        stream.read(b)
+                        accuracyMeters = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).float
+                    }
                     TAG_CRC32 -> {
                         // Fixed 32
                         crcOffset = data.size - stream.available() - 1 // tag byte already consumed
@@ -211,7 +224,7 @@ object PacketCodec {
             if (crcOffset > 0) {
                 val expectedCrc = Crc32Util.calculate(data, 0, crcOffset)
                 if (expectedCrc != crc32) {
-                    val partial = Packet(msgId = msgId, senderId = senderId, seq = seq, lang = lang, priority = priority, receiverId = receiverId, departmentId = departmentId, conversationId = conversationId, text = text, timestamp = timestamp, latitudeMicrodegrees = lat, longitudeMicrodegrees = lon, type = type, crc32 = crc32)
+                    val partial = Packet(msgId = msgId, senderId = senderId, seq = seq, lang = lang, priority = priority, receiverId = receiverId, departmentId = departmentId, conversationId = conversationId, text = text, timestamp = timestamp, latitudeMicrodegrees = lat, longitudeMicrodegrees = lon, accuracyMeters = accuracyMeters, type = type, crc32 = crc32)
                     return Result.failure(CrcMismatchException(partial, "CRC32 mismatch: calculated $expectedCrc, received $crc32"))
                 }
             }
@@ -227,6 +240,7 @@ object PacketCodec {
                     timestamp = timestamp,
                     latitudeMicrodegrees = lat,
                     longitudeMicrodegrees = lon,
+                    accuracyMeters = accuracyMeters,
                     type = type,
                     receiverId = receiverId,
                     departmentId = departmentId,

@@ -465,7 +465,151 @@ fun SettingsScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        // OFFLINE TEXT-TO-SPEECH (TTS) Card
+        item {
+            Text(text = "OFFLINE TEXT-TO-SPEECH (TTS)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+            Spacer(modifier = Modifier.height(6.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    val isAutoTts by viewModel.isAutoTtsEnabled.collectAsState()
+                    val isTtsSpeaking by viewModel.isTtsSpeaking.collectAsState()
+                    val currentLang by viewModel.selectedLanguage.collectAsState()
+                    val ttsStatusMsg by viewModel.ttsStatusMessage.collectAsState()
+                    val voiceStatus = remember(currentLang) { viewModel.ttsEngine.isLanguageAvailable(currentLang) }
+                    val isOfflineVoiceAvailable = voiceStatus == TtsStatus.SYSTEM_TTS_OFFLINE || voiceStatus == TtsStatus.OFFLINE_READY
+
+                    // 1. Switch: Auto-Read Incoming Messages
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Auto-Read Incoming Messages",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Automatically synthesizes voice for ordinary incoming chat messages",
+                                fontSize = 11.sp,
+                                color = Color.Gray
+                            )
+                        }
+                        Switch(
+                            checked = isAutoTts,
+                            onCheckedChange = { viewModel.toggleAutoTts(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = DarkSurface,
+                                checkedTrackColor = PrimaryNeonGreen
+                            )
+                        )
+                    }
+
+                    HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(vertical = 10.dp))
+
+                    // 2. Offline Voice Status Line
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Selected Voice Language:",
+                                fontSize = 11.sp,
+                                color = Color.Gray
+                            )
+                            Text(
+                                text = "${currentLang.displayName} (${currentLang.nativeName})",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+
+                        Surface(
+                            color = if (isOfflineVoiceAvailable) PrimaryNeonGreen.copy(alpha = 0.15f) else Color.Red.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isOfflineVoiceAvailable) PrimaryNeonGreen else Color.Red
+                            )
+                        ) {
+                            Text(
+                                text = if (isOfflineVoiceAvailable) "OFFLINE READY" else "UNAVAILABLE",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isOfflineVoiceAvailable) PrimaryNeonGreen else Color(0xFFFF5252)
+                            )
+                        }
+                    }
+
+                    if (!isOfflineVoiceAvailable) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "⚠ No verified offline TTS voice found for ${currentLang.displayName}. Cloud fallback is permanently disabled.",
+                            fontSize = 11.sp,
+                            color = Color(0xFFFF9800)
+                        )
+                    }
+
+                    if (ttsStatusMsg != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = ttsStatusMsg ?: "",
+                            fontSize = 11.sp,
+                            color = if (isTtsSpeaking) PrimaryNeonGreen else Color.LightGray
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 3. Test Offline Voice & Stop Button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { viewModel.testOfflineVoice() },
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            enabled = !isTtsSpeaking,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PrimaryNeonGreen,
+                                contentColor = DarkSurface
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.VolumeUp, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Test Offline Voice", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        if (isTtsSpeaking) {
+                            Button(
+                                onClick = { viewModel.stopPlayback() },
+                                modifier = Modifier.height(42.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = "Stop", modifier = Modifier.size(16.dp), tint = Color.White)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("STOP", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(14.dp))
         }
 
         // Language Model Manager (11 Languages)

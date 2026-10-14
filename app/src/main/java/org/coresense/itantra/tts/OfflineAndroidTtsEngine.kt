@@ -55,32 +55,41 @@ class OfflineAndroidTtsEngine(
         }
 
         // Check if there is an offline-capable voice installed
-        val voices = engine.voices ?: return TtsStatus.NOT_INSTALLED
-        val matchingVoices = voices.filter { it.locale.language == locale.language }
-
-        if (matchingVoices.isEmpty()) {
-            return TtsStatus.NOT_INSTALLED
+        val voices = try { engine.voices } catch (_: Exception) { null }
+        if (voices != null && voices.isNotEmpty()) {
+            val matchingVoices = voices.filter { it.locale.language == locale.language }
+            if (matchingVoices.isNotEmpty()) {
+                val offlineVoice = matchingVoices.firstOrNull { voice ->
+                    !voice.isNetworkConnectionRequired &&
+                            voice.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true
+                }
+                return if (offlineVoice != null) {
+                    TtsStatus.SYSTEM_TTS_OFFLINE
+                } else {
+                    TtsStatus.NETWORK_REQUIRED_UNAVAILABLE
+                }
+            }
         }
 
-        val offlineVoice = matchingVoices.firstOrNull { voice ->
-            !voice.isNetworkConnectionRequired &&
-                    !voice.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
-        }
-
-        return if (offlineVoice != null) {
+        // Fallback for TTS engines that do not expose voices collection
+        return if (avail != TextToSpeech.LANG_MISSING_DATA && avail != TextToSpeech.LANG_NOT_SUPPORTED) {
             TtsStatus.SYSTEM_TTS_OFFLINE
         } else {
-            TtsStatus.NETWORK_REQUIRED_UNAVAILABLE
+            TtsStatus.NOT_INSTALLED
         }
     }
 
+    private var activeCompletion: CompletableDeferred<Unit>? = null
+
     override suspend fun speak(text: String, lang: Language, isEmergency: Boolean): Result<Unit> = withContext(Dispatchers.Main) {
+        if (text.isBlank()) return@withContext Result.success(Unit)
+
         if (!isInitialized) {
-            val ready = initDeferred.await()
-            if (!ready) return@withContext Result.failure(IllegalStateException("TTS Engine failed to initialize"))
+            val ready = kotlinx.coroutines.withTimeoutOrNull(3000L) { initDeferred.await() } ?: false
+            if (!ready) return@withContext Result.failure(IllegalStateException("TTS Engine failed to initialize within timeout"))
         }
 
-        val engine = tts ?: return@withContext Result.failure(IllegalStateException("TTS not available"))
+        val engine = tts ?: return@withContext Result.failure(IllegalStateException("TTS engine not available"))
         val status = isLanguageAvailable(lang)
 
         if (status != TtsStatus.SYSTEM_TTS_OFFLINE && status != TtsStatus.OFFLINE_READY) {
@@ -90,7 +99,7 @@ class OfflineAndroidTtsEngine(
         }
 
         val locale = Locale.forLanguageTag(lang.bcp47)
-        val voices = engine.voices
+        val voices = try { engine.voices } catch (_: Exception) { null }
         val offlineVoice = voices?.firstOrNull {
             it.locale.language == locale.language && !it.isNetworkConnectionRequired
         }
@@ -102,7 +111,6 @@ class OfflineAndroidTtsEngine(
         }
 
         // Configure audio attributes based on emergency priority
-        val streamType = if (isEmergency) AudioManager.STREAM_ALARM else AudioManager.STREAM_MUSIC
         val usage = if (isEmergency) AudioAttributes.USAGE_ALARM else AudioAttributes.USAGE_MEDIA
 
         if (isEmergency) {
@@ -120,20 +128,39 @@ class OfflineAndroidTtsEngine(
             .build()
         engine.setAudioAttributes(audioAttributes)
 
+        // Cancel previous completion cleanly if another utterance was speaking
+        activeCompletion?.complete(Unit)
+
         val utteranceId = UUID.randomUUID().toString()
         val completion = CompletableDeferred<Unit>()
+        activeCompletion = completion
 
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {}
+            override fun onStart(id: String?) {}
+
             override fun onDone(id: String?) {
-                if (id == utteranceId) completion.complete(Unit)
+                if (id == utteranceId && !completion.isCompleted) {
+                    completion.complete(Unit)
+                }
             }
+
+            override fun onStop(id: String?, interrupted: Boolean) {
+                if (id == utteranceId && !completion.isCompleted) {
+                    completion.complete(Unit)
+                }
+            }
+
             @Deprecated("Deprecated in Java")
             override fun onError(id: String?) {
-                if (id == utteranceId) completion.completeExceptionally(RuntimeException("TTS playback failed"))
+                if (id == utteranceId && !completion.isCompleted) {
+                    completion.completeExceptionally(RuntimeException("TTS playback failed"))
+                }
             }
+
             override fun onError(id: String?, errorCode: Int) {
-                if (id == utteranceId) completion.completeExceptionally(RuntimeException("TTS error code: $errorCode"))
+                if (id == utteranceId && !completion.isCompleted) {
+                    completion.completeExceptionally(RuntimeException("TTS error code: $errorCode"))
+                }
             }
         })
 
@@ -142,6 +169,7 @@ class OfflineAndroidTtsEngine(
             params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM)
         }
 
+        // QUEUE_FLUSH safely replaces any current speech without overlap
         val res = engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         if (res == TextToSpeech.ERROR) {
             return@withContext Result.failure(IllegalStateException("TextToSpeech.speak returned ERROR"))
@@ -152,16 +180,26 @@ class OfflineAndroidTtsEngine(
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        } finally {
+            if (activeCompletion == completion) {
+                activeCompletion = null
+            }
         }
     }
 
     override fun stop() {
-        tts?.stop()
+        try {
+            activeCompletion?.complete(Unit)
+            activeCompletion = null
+            tts?.stop()
+        } catch (_: Exception) {}
     }
 
     override fun close() {
         stop()
-        tts?.shutdown()
+        try {
+            tts?.shutdown()
+        } catch (_: Exception) {}
         tts = null
         isInitialized = false
     }

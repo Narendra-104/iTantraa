@@ -51,8 +51,9 @@ class AudioRecorder {
         val bufferSize = maxOf(minBufferSize, AudioConfig.BYTES_PER_FRAME * 4)
 
         val audioSources = listOf(
+            MediaRecorder.AudioSource.MIC,
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            MediaRecorder.AudioSource.MIC
+            MediaRecorder.AudioSource.DEFAULT
         )
 
         for (source in audioSources) {
@@ -66,6 +67,17 @@ class AudioRecorder {
                 )
 
                 if (recorder.state == AudioRecord.STATE_INITIALIZED) {
+                    try {
+                        if (android.media.audiofx.AutomaticGainControl.isAvailable()) {
+                            android.media.audiofx.AutomaticGainControl.create(recorder.audioSessionId)?.enabled = true
+                        }
+                    } catch (_: Exception) {}
+                    try {
+                        if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+                            android.media.audiofx.NoiseSuppressor.create(recorder.audioSessionId)?.enabled = true
+                        }
+                    } catch (_: Exception) {}
+
                     recorder.startRecording()
                     audioRecord = recorder
                     isRecording.set(true)
