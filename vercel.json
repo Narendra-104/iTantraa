@@ -1,6 +1,16 @@
 {
   "redirects": [
     {
+      "source": "/iTantra-v27.apk",
+      "destination": "https://github.com/Narendra-104/iTantraa/releases/download/v27.0.0/iTantra-v27.apk",
+      "permanent": false
+    },
+    {
+      "source": "/iTantra-latest.apk",
+      "destination": "https://github.com/Narendra-104/iTantraa/releases/download/v27.0.0/iTantra-v27.apk",
+      "permanent": false
+    },
+    {
       "source": "/iTantra-v22.apk",
       "destination": "https://github.com/Narendra-104/iTantraa/releases/download/v22.0.0/iTantra-v22.apk",
       "permanent": false
