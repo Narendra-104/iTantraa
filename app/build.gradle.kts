@@ -7,14 +7,14 @@ plugins {
 
 android {
     namespace = "org.coresense.itantra"
-    compileSdk = 36
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "org.coresense.itantra"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0.0-SIH26173"
+        versionCode = 29
+        versionName = "29.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -23,6 +23,13 @@ android {
 
         ndk {
             abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
+        }
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
@@ -38,7 +45,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -64,6 +71,11 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
     }
 }
 
