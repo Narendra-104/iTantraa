@@ -1,9 +1,12 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>iTantra Demo - SIH</title>
+    <meta name="theme-color" content="#121212">
+    <meta name="description" content="Download iTantra v29, an offline emergency communication application for disaster response and department coordination.">
+    <title>iTantra v29 - SIH | Offline Emergency Communication</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -17,6 +20,7 @@
             margin: 0;
             text-align: center;
             padding: 20px;
+            box-sizing: border-box;
         }
         h1 {
             color: #00ff00;
@@ -46,6 +50,7 @@
             flex-wrap: wrap;
             justify-content: center;
             max-width: 860px;
+            width: 100%;
         }
         .card {
             background-color: #1e1e1e;
@@ -96,7 +101,7 @@
             background-color: #00cc00;
         }
         .secondary-link {
-            color: #888888;
+            color: #aaaaaa;
             font-size: 0.8rem;
             text-decoration: underline;
             margin-top: 15px;
@@ -108,46 +113,74 @@
             margin-top: 15px;
             line-height: 1.6;
         }
+        .footer {
+            margin-top: 30px;
+            color: #777777;
+            font-size: 0.8rem;
+        }
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 2rem;
+            }
+            .subtitle {
+                font-size: 1rem;
+            }
+            .card {
+                width: 100%;
+                max-width: 360px;
+                padding: 28px 20px;
+            }
+        }
     </style>
 </head>
 <body>
     <h1>iTantra Demo</h1>
-    <p class="subtitle">Off-Grid Disaster Mesh & Department Communication</p>
-    <div class="badge">LATEST BUILD: v27 (Offline Marathi STT & Accessible Link UI)</div>
-    
-    <div class="container">
-        <!-- QR Code Card -->
-        <div class="card">
-            <h2>SCAN TO DOWNLOAD</h2>
-            <p>Scan with Mobile</p>
-            <p class="small-text">Instant direct download to Android phone</p>
-            <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https://itantra-ten.vercel.app/iTantra-v27.apk" alt="Download QR Code" style="width: 160px; height: 160px; border-radius: 8px; margin-top: 5px;" />
-            <p class="small-text" style="margin-top: 12px; margin-bottom: 0;">Direct High-Speed CDN</p>
-        </div>
+    <p class="subtitle">Off-Grid Disaster Mesh &amp; Department Communication</p>
+    <div class="badge">LATEST BUILD: v29 — Updated Login, Sign Up &amp; Language Selection</div>
 
-        <!-- Android App Card -->
-        <div class="card">
-            <h2>📱 ANDROID APP</h2>
-            <a href="/iTantra-v27.apk" download="iTantra-v27.apk" class="action-btn">Download APK (v27)</a>
-            <a href="https://github.com/Narendra-104/iTantraa/releases/tag/v27.0.0" target="_blank" class="secondary-link">GitHub Release Page (v27.0.0)</a>
-            <div class="features-list">
-                ✔ Genuine Offline Marathi STT (AI4Bharat Vakyansh Wav2Vec2 CTC ONNX, Devanagari ळ Support)<br>
-                ✔ Link & Network Settings High-Contrast Accessible UI (Dark Theme Readable Headings & Options)<br>
-                ✔ User Profile Permanent Storage (Blood Group & Identity in Room DB v4)<br>
-                ✔ Step 13: Dial Hands-Free Speech-over-Packet Telephony (Silero VAD + Offline STT)<br>
-                ✔ Step 11: Offline Text-to-Speech (TTS) Voice Synthesis & Centralized Controls<br>
-                ✔ Step 12: Track Me Live GPS Telemetry, Radar Vector Canvas & Peer Directory<br>
-                ✔ Wi-Fi Direct Peer Discovery & P2P Sockets (No Location Filter)<br>
-                ✔ Bidirectional Chat (GLOBAL channel + Direct & ALL view)<br>
-                ✔ Real Offline STT (Wav2Vec2 English, Hindi & Marathi CTC ONNX)<br>
-                ✔ Zero Cloud / Offline Speech Recognition & Synthesis<br>
-                ✔ Bluetooth Classic, LAN UDP Hotspot & Wi-Fi Direct Transports<br>
-                ✔ ACK/NACK Reliability & Finite Retries (Measured RTT Latency)<br>
-                ✔ Direct 1-on-1 End-to-End Chat & [Direct] Badge<br>
-                ✔ Department Routing & Threaded Reply<br>
-                ✔ Emergency SOS Routing & Priority Delivery
-            </div>
+```
+<div class="container">
+    <!-- QR Code Card -->
+    <div class="card">
+        <h2>SCAN TO DOWNLOAD</h2>
+        <p>Scan with Mobile</p>
+        <p class="small-text">Download the latest Android APK</p>
+        <img
+            src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&amp;data=https%3A%2F%2Fitantra-ten.vercel.app%2FiTantra-latest.apk"
+            alt="QR code to download iTantra v29"
+            width="160"
+            height="160"
+            style="border-radius: 8px; margin-top: 5px;"
+        />
+        <p class="small-text" style="margin-top: 12px; margin-bottom: 0;">Official iTantra download link</p>
+    </div>
+
+    <!-- Android App Card -->
+    <div class="card">
+        <h2>📱 ANDROID APP</h2>
+        <a href="/iTantra-latest.apk" class="action-btn">Download APK (v29)</a>
+        <a href="https://github.com/Narendra-104/iTantraa/releases/tag/v29.0.0"
+           target="_blank"
+           rel="noopener noreferrer"
+           class="secondary-link">GitHub Release Page (v29.0.0)</a>
+
+        <div class="features-list">
+            ✔ Updated Login and Sign Up screens<br>
+            ✔ Language selection and localization improvements<br>
+            ✔ Offline emergency communication<br>
+            ✔ Bluetooth Classic, LAN UDP Hotspot and Wi-Fi Direct transports<br>
+            ✔ Bidirectional chat and direct messaging<br>
+            ✔ ACK/NACK reliability and finite retries<br>
+            ✔ Emergency SOS routing and priority delivery<br>
+            ✔ Offline speech recognition and text-to-speech, where supported<br>
+            ✔ Track Me GPS telemetry, subject to device permissions<br>
+            ✔ Department routing and threaded replies
         </div>
     </div>
+</div>
+
+<p class="footer">iTantra | SIH | Team CoreSense</p>
+```
+
 </body>
 </html>
