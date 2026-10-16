@@ -2,6 +2,9 @@ package org.coresense.itantra.ui
 
 import android.app.Application
 import android.content.Context
+import android.media.AudioManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
@@ -71,10 +74,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val identityRepository = org.coresense.itantra.data.repository.IdentityRepository(context)
     private val messageRepository = org.coresense.itantra.data.repository.MessageRepository(ITantraApp.instance.database.messageDao(), ITantraApp.instance.database.conversationDao())
 
+    val userProfile: StateFlow<org.coresense.itantra.storage.UserProfileEntity?> = database.userProfileDao().getUserProfile()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun saveUserProfile(profile: org.coresense.itantra.storage.UserProfileEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            database.userProfileDao().insertOrUpdateProfile(profile)
+            val currentRole = identityRepository.userIdentity.value?.role ?: org.coresense.itantra.identity.Role.USER
+            val currentDept = identityRepository.userIdentity.value?.departmentId
+            identityRepository.saveIdentity(
+                name = profile.name,
+                role = currentRole,
+                departmentId = currentDept
+            )
+            identityRepository.saveProfileDetails(
+                aadhar = profile.aadhar,
+                email = profile.email,
+                mobileNumber = profile.mobileNumber,
+                address = profile.address,
+                birthDate = profile.birthDate,
+                bloodGroup = profile.bloodGroup,
+                gender = profile.gender
+            )
+        }
+    }
+
     // Settings State
     val callsign = MutableStateFlow("CORE-ALPHA")
     val receiverDepartment = MutableStateFlow("GLOBAL") // GLOBAL, NDRF, POLICE, FIRE
-    val selectedLanguage = MutableStateFlow(Language.HINDI)
+    val selectedLanguage = MutableStateFlow(
+        run {
+            val savedName = try {
+                context.getSharedPreferences("itantra_identity", android.content.Context.MODE_PRIVATE)
+                    .getString("app_language", Language.HINDI.name)
+            } catch (_: Throwable) { Language.HINDI.name }
+            try { Language.valueOf(savedName ?: Language.HINDI.name) } catch (_: Throwable) { Language.HINDI }
+        }
+    )
     val isWalkieTalkieMode = MutableStateFlow(true) // true = Walkie Talkie (PTT), false = Continuous Call (VAD)
     val isReadBackEnabled = MutableStateFlow(false)
     val vadSensitivity = MutableStateFlow(0.5f)
@@ -93,11 +129,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val sentenceAssembler = SentenceAssembler()
 
     fun setAppLanguage(lang: Language): Boolean {
+        selectedLanguage.value = lang
+        try {
+            context.getSharedPreferences("itantra_identity", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString("app_language", lang.name)
+                .apply()
+        } catch (_: Throwable) {}
+
         if (!modelRegistry.isModelInstalled(lang)) {
             liveTranscript.value = "${lang.displayName} STT [Not Installed - Download in Settings]"
             return false
         }
-        selectedLanguage.value = lang
         liveTranscript.value = "${lang.displayName} STT [Loading...]"
         modelRegistry.updateModelStatus(lang, org.coresense.itantra.stt.ModelStatus.LOADING)
         viewModelScope.launch(Dispatchers.IO) {
@@ -195,14 +238,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val trackedPeers: StateFlow<Map<String, TrackedPeer>> = _trackedPeers.asStateFlow()
 
     // Step 13: Dial Hands-Free Speech-over-Packet Call States
+    val callSessionState = MutableStateFlow(CallSessionState.IDLE)
     val isCallActive = MutableStateFlow(false)
     val activeCallPeerId = MutableStateFlow<String?>(null)
+    val activeCallId = MutableStateFlow<String?>(null)
+    val incomingCallFrom = MutableStateFlow<String?>(null)
+    val incomingCallDisplayName = MutableStateFlow<String?>(null)
+    val incomingCallId = MutableStateFlow<String?>(null)
     val isCallMuted = MutableStateFlow(false)
     val callDurationSeconds = MutableStateFlow(0)
     val callStatusMessage = MutableStateFlow("Ready to call")
     val callTranscripts = MutableStateFlow<List<Pair<String, String>>>(emptyList())
+    private val receivedCallTranscriptKeys = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private var callSeqCounter = 0
     private var callJob: Job? = null
     private var callTimerJob: Job? = null
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     val sosHistory: StateFlow<List<org.coresense.itantra.storage.MessageEntity>> = messageRepository.getAllMessages()
         .map { list -> list.filter { it.priority == "SOS" || it.priority == "URGENT" } }
@@ -257,12 +309,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        // Step 11: Monitor TTS engine readiness
+        viewModelScope.launch(Dispatchers.IO) {
+            if (ttsEngine is OfflineAndroidTtsEngine) {
+                (ttsEngine as OfflineAndroidTtsEngine).awaitInitialization(3000L)
+            }
+            isTtsReady.value = ttsEngine.isReady()
+        }
+
         // Step 13: Automatically end call if transport link disconnects
         viewModelScope.launch {
             connectionState.collect { state ->
-                if (state !is ConnectionState.Connected && isCallActive.value) {
-                    callStatusMessage.value = "Call ended: transport disconnected"
-                    endCall()
+                if (state !is ConnectionState.Connected && (isCallActive.value || callSessionState.value != CallSessionState.IDLE)) {
+                    terminateCallLocally("Call ended: transport disconnected")
                 }
             }
         }
@@ -519,15 +578,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------------------
     val isAutoTtsEnabled = MutableStateFlow(true)
     val isTtsSpeaking = MutableStateFlow(false)
+    val isTtsReady = MutableStateFlow(false)
     val currentlyPlayingMessageId = MutableStateFlow<Long?>(null)
-    val ttsStatusMessage = MutableStateFlow<String?>("Offline TTS Ready")
+    val ttsStatusMessage = MutableStateFlow<String?>("Ready")
     private var activePlaybackJob: Job? = null
+
+    fun getTtsLanguageStatus(lang: Language): TtsStatus {
+        return ttsEngine.isLanguageAvailable(lang)
+    }
 
     fun toggleAutoTts(enabled: Boolean? = null) {
         val next = enabled ?: !isAutoTtsEnabled.value
         isAutoTtsEnabled.value = next
         if (!next) {
             stopPlayback()
+        }
+    }
+
+    fun speakCustomText(text: String, lang: Language = selectedLanguage.value) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) {
+            ttsStatusMessage.value = "Enter text to speak"
+            return
+        }
+
+        stopPlayback()
+
+        activePlaybackJob = viewModelScope.launch(Dispatchers.Main) {
+            isTtsSpeaking.value = true
+            activePipelineStage.value = "TTS"
+            ttsStatusMessage.value = "Checking voice for ${lang.displayName}..."
+            val status = ttsEngine.isLanguageAvailable(lang)
+            if (status != TtsStatus.SYSTEM_TTS_OFFLINE && status != TtsStatus.OFFLINE_READY) {
+                ttsStatusMessage.value = "No offline voice for ${lang.displayName} ($status). Install voice data in Android Settings."
+                isTtsSpeaking.value = false
+                activePipelineStage.value = "IDLE"
+                return@launch
+            }
+
+            ttsStatusMessage.value = "Speaking in ${lang.displayName}..."
+            val res = ttsEngine.speak(trimmed, lang, isEmergency = false)
+            if (res.isSuccess) {
+                ttsStatusMessage.value = "Finished speaking (${lang.displayName})"
+            } else {
+                ttsStatusMessage.value = res.exceptionOrNull()?.message ?: "Playback error"
+            }
+            isTtsSpeaking.value = false
+            activePipelineStage.value = "IDLE"
         }
     }
 
@@ -574,6 +671,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         currentlyPlayingMessageId.value = null
         isTtsSpeaking.value = false
         activePipelineStage.value = "IDLE"
+        ttsStatusMessage.value = "Stopped"
     }
 
     fun testOfflineVoice(lang: Language = selectedLanguage.value) {
@@ -615,6 +713,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Step 13: Dial / Hands-Free Speech-over-Packet Call Session
     // -------------------------------------------------------------------------
 
+    private fun requestCallAudioFocus() {
+        try {
+            if (audioManager == null) {
+                audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val playbackAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(false)
+                    .setOnAudioFocusChangeListener { /* Focus change listener */ }
+                    .build()
+                audioFocusRequest = focusRequest
+                audioManager?.requestAudioFocus(focusRequest)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.requestAudioFocus(
+                    null,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                )
+            }
+        } catch (_: Throwable) {}
+    }
+
+    private fun abandonCallAudioFocus() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+                audioFocusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.abandonAudioFocus(null)
+            }
+        } catch (_: Throwable) {}
+    }
+
     fun startCall(targetPeerId: String) {
         val trimmed = targetPeerId.trim()
         if (trimmed.isBlank() || trimmed.equals("GLOBAL", ignoreCase = true) || trimmed.equals("ALL", ignoreCase = true)) {
@@ -622,7 +760,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        if (isCallActive.value) return
+        if (callSessionState.value != CallSessionState.IDLE) return
 
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             callStatusMessage.value = "Microphone permission required for call"
@@ -645,21 +783,124 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        isCallActive.value = true
+        val callId = "call_" + System.currentTimeMillis().toString(36) + "_" + (1000..9999).random()
+        activeCallId.value = callId
         activeCallPeerId.value = trimmed
+        callSessionState.value = CallSessionState.OUTGOING_CALL
+        isCallActive.value = false
         isCallMuted.value = false
         callDurationSeconds.value = 0
-        callStatusMessage.value = "Connected with $trimmed"
+        callStatusMessage.value = "Calling $trimmed..."
         callTranscripts.value = emptyList()
+        receivedCallTranscriptKeys.clear()
+        callSeqCounter = 0
 
+        // Send dedicated CALL_SIGNAL invite packet to specific peer
+        val myId = identityRepository.getDeviceId()
+        val myName = callsign.value.ifBlank { myId }
+        val invitePacket = Packet(
+            msgId = System.currentTimeMillis() and 0x7FFFFFFF,
+            senderId = myId,
+            receiverId = trimmed,
+            conversationId = callId,
+            seq = ++callSeqCounter,
+            lang = selectedLanguage.value,
+            priority = PacketPriority.NORMAL,
+            text = "CALL_INVITE:$callId:$myId:$myName",
+            type = PacketType.CALL_SIGNAL,
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            reliabilityEngine.sendPacket(invitePacket)
+        }
+    }
+
+    fun acceptIncomingCall() {
+        cancelCallNotification()
+        if (callSessionState.value != CallSessionState.INCOMING_CALL) return
+        val callId = incomingCallId.value ?: return
+        val caller = incomingCallFrom.value ?: return
+        val myId = identityRepository.getDeviceId()
+        val myName = callsign.value.ifBlank { myId }
+
+        activeCallId.value = callId
+        activeCallPeerId.value = caller
+        incomingCallId.value = null
+        incomingCallFrom.value = null
+        incomingCallDisplayName.value = null
+
+        // Send CALL_ACCEPT signal packet
+        val acceptPacket = Packet(
+            msgId = System.currentTimeMillis() and 0x7FFFFFFF,
+            senderId = myId,
+            receiverId = caller,
+            conversationId = callId,
+            seq = ++callSeqCounter,
+            lang = selectedLanguage.value,
+            priority = PacketPriority.NORMAL,
+            text = "CALL_ACCEPT:$callId:$myId:$myName",
+            type = PacketType.CALL_SIGNAL,
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            reliabilityEngine.sendPacket(acceptPacket)
+        }
+
+        startActiveCallSession(caller, callId)
+    }
+
+    fun rejectIncomingCall() {
+        cancelCallNotification()
+        if (callSessionState.value != CallSessionState.INCOMING_CALL) return
+        val callId = incomingCallId.value
+        val caller = incomingCallFrom.value
+        val myId = identityRepository.getDeviceId()
+
+        if (callId != null && caller != null) {
+            val rejectPacket = Packet(
+                msgId = System.currentTimeMillis() and 0x7FFFFFFF,
+                senderId = myId,
+                receiverId = caller,
+                conversationId = callId,
+                seq = ++callSeqCounter,
+                lang = selectedLanguage.value,
+                priority = PacketPriority.NORMAL,
+                text = "CALL_REJECT:$callId",
+                type = PacketType.CALL_SIGNAL,
+                timestamp = System.currentTimeMillis()
+            )
+            viewModelScope.launch(Dispatchers.IO) {
+                reliabilityEngine.sendPacket(rejectPacket)
+            }
+        }
+
+        incomingCallId.value = null
+        incomingCallFrom.value = null
+        incomingCallDisplayName.value = null
+        callSessionState.value = CallSessionState.IDLE
+        callStatusMessage.value = "Call declined"
+    }
+
+    fun startActiveCallSession(peerId: String, callId: String) {
+        callSessionState.value = CallSessionState.CONNECTED
+        isCallActive.value = true
+        activeCallPeerId.value = peerId
+        activeCallId.value = callId
+        isCallMuted.value = false
+        callDurationSeconds.value = 0
+        callStatusMessage.value = "Connected with $peerId"
+        callTranscripts.value = emptyList()
+        receivedCallTranscriptKeys.clear()
+
+        requestCallAudioFocus()
         TransmissionService.start(context)
 
         // 1. Duration timer
         callTimerJob?.cancel()
         callTimerJob = viewModelScope.launch {
-            while (isActive && isCallActive.value) {
+            while (isActive && callSessionState.value == CallSessionState.CONNECTED) {
                 delay(1000)
-                if (isCallActive.value) {
+                if (callSessionState.value == CallSessionState.CONNECTED) {
                     callDurationSeconds.value += 1
                 }
             }
@@ -680,13 +921,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         callJob?.cancel()
         callJob = viewModelScope.launch(Dispatchers.IO) {
             audioRecorder.audioFrames.collect { frame ->
-                if (!isCallActive.value) return@collect
+                if (callSessionState.value != CallSessionState.CONNECTED) return@collect
                 if (isCallMuted.value) return@collect // Audio silenced while muted
 
                 val vadEvent = vadDetector.processFrame(frame)
                 when (vadEvent) {
                     is VadEvent.SpeechStarted -> {
-                        if (isCallActive.value && !isCallMuted.value) {
+                        if (callSessionState.value == CallSessionState.CONNECTED && !isCallMuted.value) {
                             callStatusMessage.value = "Speaking..."
                             activePipelineStage.value = "MIC"
                         }
@@ -696,12 +937,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     is VadEvent.SpeechEnded -> {
                         val completeAudio = vadEvent.completeUtterance
-                        if (completeAudio.isNotEmpty() && isCallActive.value && !isCallMuted.value) {
+                        if (completeAudio.isNotEmpty() && callSessionState.value == CallSessionState.CONNECTED && !isCallMuted.value) {
                             callStatusMessage.value = "Transcribing..."
                             activePipelineStage.value = "STT"
-                            processAndSendCallSegment(completeAudio, trimmed)
-                            if (isCallActive.value && !isCallMuted.value) {
-                                callStatusMessage.value = "Connected with $trimmed"
+                            processAndSendCallSegment(completeAudio, peerId, callId)
+                            if (callSessionState.value == CallSessionState.CONNECTED && !isCallMuted.value) {
+                                callStatusMessage.value = "Connected with $peerId"
                                 activePipelineStage.value = "IDLE"
                             }
                         }
@@ -714,8 +955,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun processAndSendCallSegment(audioSamples: ShortArray, targetPeerId: String) {
-        if (!isCallActive.value || isCallMuted.value) return
+    private suspend fun processAndSendCallSegment(audioSamples: ShortArray, targetPeerId: String, callId: String) {
+        if (callSessionState.value != CallSessionState.CONNECTED || isCallMuted.value) return
 
         if (!sttEngine.isLanguageLoaded(selectedLanguage.value)) {
             val initRes = sttEngine.initialize(selectedLanguage.value)
@@ -733,15 +974,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (normalized.isNotBlank()) {
+                    val currentSeq = ++callSeqCounter
                     val currentList = callTranscripts.value.toMutableList()
                     currentList.add(Pair("Me", normalized))
                     callTranscripts.value = currentList
 
-                    sendTextMessage(
-                        text = normalized,
+                    // Transmit dedicated CALL_TRANSCRIPT packet strictly to target peer without polluting Room DB or Chat feed
+                    val callPacket = Packet(
+                        msgId = System.currentTimeMillis() and 0x7FFFFFFF,
+                        senderId = identityRepository.getDeviceId(),
+                        receiverId = targetPeerId,
+                        conversationId = callId,
+                        seq = currentSeq,
+                        lang = selectedLanguage.value,
                         priority = PacketPriority.NORMAL,
-                        receiverId = targetPeerId
+                        text = normalized,
+                        type = PacketType.CALL_TRANSCRIPT,
+                        timestamp = System.currentTimeMillis()
                     )
+                    viewModelScope.launch(Dispatchers.IO) {
+                        reliabilityEngine.sendPacket(callPacket)
+                    }
                 }
             }
         }
@@ -754,8 +1007,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun endCall() {
+        cancelCallNotification()
+        val target = activeCallPeerId.value
+        val callId = activeCallId.value
+
+        if (target != null && callId != null) {
+            val endPacket = Packet(
+                msgId = System.currentTimeMillis() and 0x7FFFFFFF,
+                senderId = identityRepository.getDeviceId(),
+                receiverId = target,
+                conversationId = callId,
+                seq = ++callSeqCounter,
+                lang = selectedLanguage.value,
+                priority = PacketPriority.NORMAL,
+                text = "CALL_END:$callId",
+                type = PacketType.CALL_SIGNAL,
+                timestamp = System.currentTimeMillis()
+            )
+            viewModelScope.launch(Dispatchers.IO) {
+                reliabilityEngine.sendPacket(endPacket)
+            }
+        } else if (callSessionState.value == CallSessionState.INCOMING_CALL) {
+            rejectIncomingCall()
+            return
+        }
+
+        terminateCallLocally("Call ended")
+    }
+
+    fun terminateCallLocally(statusMsg: String) {
+        cancelCallNotification()
+        callSessionState.value = CallSessionState.IDLE
         isCallActive.value = false
         activeCallPeerId.value = null
+        activeCallId.value = null
+        incomingCallFrom.value = null
+        incomingCallDisplayName.value = null
+        incomingCallId.value = null
         isCallMuted.value = false
         callTimerJob?.cancel()
         callTimerJob = null
@@ -763,8 +1051,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         callJob = null
         audioRecorder.stop()
         vadDetector.resetState()
+        abandonCallAudioFocus()
         TransmissionService.stop(context)
-        callStatusMessage.value = "Call ended"
+        callStatusMessage.value = statusMsg
     }
 
     fun sendTextMessage(
@@ -775,7 +1064,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         departmentId: String? = null,
         packetType: PacketType? = null
     ) {
-        val trimmed = text.trim()
+        val trimmed = text.trim().take(4096)
         if (trimmed.isBlank()) return // STRICT RULE: Never send blank or placeholder text
 
         val myDeviceId = identityRepository.getDeviceId()
@@ -788,8 +1077,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // When sending to a department, receiverId is null (broadcast to department per Step 8 & 9)
         val targetReceiver = if (isDeptTarget) null else rawReceiver
         
-        // Department ID is either the target department or (if sent by a department device) the sender's department
-        val targetDeptId = resolvedDept ?: (if (localIdentity?.role == Role.DEPARTMENT) localIdentity.departmentId else null)
+        // Department ID is ONLY set if this message is specifically addressed to a department target
+        val targetDeptId = resolvedDept
 
         val convId = when {
             !conversationId.isNullOrBlank() -> conversationId
@@ -857,7 +1146,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         lang = packet.lang.displayName,
                         priority = packet.priority.name,
                         text = packet.text,
-                        receiverId = packet.receiverId,
+                        receiverId = packet.receiverId ?: targetDeptId,
                         departmentId = packet.departmentId,
                         conversationId = packet.conversationId,
                         timestamp = packet.timestamp,
@@ -923,21 +1212,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun startTrackMe(targetRecipient: String = "GLOBAL", intervalMs: Long = 15_000L) {
+    val activeTrackingRecipient = MutableStateFlow("GLOBAL")
+
+    fun logLocationDiagnostic(
+        action: String,
+        packet: Packet,
+        accuracy: Float?,
+        fixTimestamp: Long,
+        eventTime: Long,
+        decisionReason: String
+    ) {
+        val ageMs = (eventTime - fixTimestamp).coerceAtLeast(0L)
+        val logMsg = "[$action] sender=${packet.senderId}, seq=${packet.seq}, lat=${packet.latitudeDegrees}, lon=${packet.longitudeDegrees}, acc=±${accuracy?.toInt()}m, fixTime=$fixTimestamp, eventTime=$eventTime, age=${ageMs}ms -> $decisionReason"
+        try {
+            android.util.Log.i("iTantra-Location", logMsg)
+        } catch (_: Throwable) {}
+    }
+
+    fun startTrackMe(targetRecipient: String = "GLOBAL", intervalMs: Long = 1000L) {
         if (isTrackMeActive.value) return
         isTrackMeActive.value = true
-        gpsProvider.startContinuousUpdates(intervalMs = intervalMs)
+        activeTrackingRecipient.value = targetRecipient
+
+        // Start hardware GPS continuous acquisition targeting ~1-second interval
+        gpsProvider.startContinuousUpdates(intervalMs = intervalMs, minDistanceM = 0.0f)
 
         trackMeJob?.cancel()
-        trackMeJob = viewModelScope.launch {
+        trackMeJob = viewModelScope.launch(Dispatchers.IO) {
             // Immediate transmission of current fix if ready
             sendLocationBeacon(targetRecipient)
 
+            var lastSentFixTimestamp = 0L
+            var lastSentTime = 0L
+
             while (isActive && isTrackMeActive.value) {
-                delay(intervalMs)
-                if (isActive && isTrackMeActive.value) {
-                    sendLocationBeacon(targetRecipient)
+                val currentGps = gpsState.value
+                val now = System.currentTimeMillis()
+                if (currentGps is GpsState.Fix) {
+                    val isNewFix = currentGps.timestamp != lastSentFixTimestamp
+                    val minIntervalElapsed = (now - lastSentTime) >= intervalMs
+                    if (isNewFix || minIntervalElapsed) {
+                        sendLocationBeacon(targetRecipient)
+                        lastSentFixTimestamp = currentGps.timestamp
+                        lastSentTime = now
+                    }
                 }
+                delay(500L)
             }
         }
     }
@@ -949,11 +1269,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         gpsProvider.stopContinuousUpdates()
     }
 
-    fun toggleTrackMe(targetRecipient: String = "GLOBAL") {
+    fun toggleTrackMe(targetRecipient: String = "GLOBAL", intervalMs: Long = 1000L) {
         if (isTrackMeActive.value) {
             stopTrackMe()
         } else {
-            startTrackMe(targetRecipient)
+            startTrackMe(targetRecipient, intervalMs)
         }
     }
 
@@ -963,13 +1283,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val lat = gps.latitude
             val lon = gps.longitude
             val acc = gps.accuracyMeters
+            val fixTime = gps.timestamp
+            val myDeviceId = identityRepository.getDeviceId()
             val beaconText = "[TRACK-ME] Lat: ${String.format(java.util.Locale.US, "%.5f", lat)}, Lon: ${String.format(java.util.Locale.US, "%.5f", lon)} (±${acc.toInt()}m)"
-            sendTextMessage(
-                text = beaconText,
+            val targetReceiver = if (targetRecipient == "GLOBAL" || targetRecipient == "ALL") null else targetRecipient
+
+            val msgId = (System.currentTimeMillis() shl 16) or (UUID.randomUUID().hashCode().toLong() and 0xFFFFL)
+            val seq = reliabilityEngine.nextSequenceNumber()
+
+            val packet = Packet(
+                msgId = msgId,
+                senderId = myDeviceId,
+                receiverId = targetReceiver,
+                departmentId = null,
+                conversationId = if (targetReceiver != null) getConversationId(myDeviceId, targetReceiver) else "conv_global",
+                seq = seq,
+                lang = selectedLanguage.value,
                 priority = PacketPriority.URGENT,
-                receiverId = if (targetRecipient == "GLOBAL" || targetRecipient == "ALL") null else targetRecipient,
-                packetType = PacketType.LOCATION
+                text = beaconText,
+                timestamp = fixTime,
+                latitudeMicrodegrees = (lat * 1_000_000).toInt(),
+                longitudeMicrodegrees = (lon * 1_000_000).toInt(),
+                accuracyMeters = acc,
+                type = PacketType.LOCATION
             )
+
+            logLocationDiagnostic("TX_BEACON", packet, acc, fixTime, System.currentTimeMillis(), "Transmitting fresh live GPS beacon")
+            reliabilityEngine.enqueue(packet)
         }
     }
 
@@ -998,20 +1338,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val gps = gpsState.value
         val locationStr = if (gps is GpsState.Fix) {
-            "GPS: ${String.format("%.5f, %.5f", gps.latitude, gps.longitude)}"
+            "GPS: ${String.format(java.util.Locale.US, "%.5f, %.5f", gps.latitude, gps.longitude)}"
         } else {
             "GPS: NO FIX (Searching)"
         }
 
-        val typeTag = emergencyType?.uppercase() ?: "GENERAL"
-        val targetDept = resolveDepartmentId(emergencyType) ?: "NDRF"
-        val sosText = "[$typeTag EMERGENCY SOS] Immediate evacuation / assistance needed! $locationStr"
-        sendTextMessage(
-            text = sosText,
-            priority = PacketPriority.SOS,
-            departmentId = targetDept,
-            packetType = PacketType.SOS
-        )
+        val resolvedDept = resolveDepartmentId(emergencyType)
+        val targetUser = if (resolvedDept == null && !emergencyType.isNullOrBlank()) emergencyType.trim() else null
+        val finalDept = if (resolvedDept != null) resolvedDept else if (targetUser == null) "NDRF" else null
+
+        if (finalDept != null) {
+            val sosText = "[$finalDept EMERGENCY SOS] Immediate evacuation / assistance needed! $locationStr"
+            sendTextMessage(
+                text = sosText,
+                priority = PacketPriority.SOS,
+                departmentId = finalDept,
+                packetType = PacketType.SOS
+            )
+        } else {
+            val typeTag = targetUser ?: "DIRECT"
+            val sosText = "[$typeTag EMERGENCY SOS] Immediate evacuation / assistance needed! $locationStr"
+            sendTextMessage(
+                text = sosText,
+                priority = PacketPriority.SOS,
+                receiverId = targetUser,
+                departmentId = null,
+                packetType = PacketType.SOS
+            )
+        }
     }
 
     fun cancelActiveSos() {
@@ -1039,7 +1393,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // 3. Department request check
-        val targetDeptId = packet.departmentId ?: resolveDepartmentId(packet.receiverId)
+        val targetDeptId = packet.departmentId?.let { resolveDepartmentId(it) ?: it } ?: resolveDepartmentId(packet.receiverId)
         val isDepartmentMessage = targetDeptId != null
 
         // Department device routing rule (Step 8 Requirement 4 & Safety Rule):
@@ -1047,15 +1401,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // packet.departmentId == localDepartmentId AND local identity role == DEPARTMENT.
         // Persistent IdentityRepository identity is authoritative. UI selectors NEVER affect routing.
         val isForMyDepartment = if (isDepartmentMessage && targetDeptId != null) {
-            val isDeptRole = localIdentity?.role == Role.DEPARTMENT
             val localDeptId = localIdentity?.departmentId
-            isDeptRole && localDeptId != null && (
-                localDeptId.equals(targetDeptId, ignoreCase = true) ||
-                (targetDeptId == "FIRE" && localDeptId.equals("FIRE_DISASTER", ignoreCase = true)) ||
-                (targetDeptId == "FIRE_DISASTER" && localDeptId.equals("FIRE", ignoreCase = true)) ||
-                (targetDeptId == "CIVIL" && localDeptId.equals("CIVIL_DEFENCE", ignoreCase = true)) ||
-                (targetDeptId == "CIVIL_DEFENCE" && localDeptId.equals("CIVIL", ignoreCase = true))
-            )
+            val isDeptRole = localIdentity?.role == Role.DEPARTMENT || !localDeptId.isNullOrBlank()
+            isDeptRole && areDepartmentsMatching(localDeptId, targetDeptId)
         } else {
             false
         }
@@ -1063,26 +1411,163 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // 4. Global broadcast check: only for general broadcast messages not addressed to a department
         val isGlobalBroadcast = (packet.receiverId == null || packet.receiverId.equals("GLOBAL", ignoreCase = true)) && !isDepartmentMessage
 
-        val isAccepted = isDirectForMe || isForMyDepartment || isGlobalBroadcast
+        val isCallPacket = packet.type == PacketType.CALL_SIGNAL || packet.type == PacketType.CALL_TRANSCRIPT
+
+        val isAccepted = isDirectForMe || isForMyDepartment || isGlobalBroadcast || isCallPacket
 
         if (!isAccepted) {
             // STRICT RULE: Do NOT store or display packets addressed to another device or department
             return
         }
 
+        // Step 13: Handle Dedicated Call Signaling Packets
+        if (packet.type == PacketType.CALL_SIGNAL) {
+            val text = packet.text.trim()
+            when {
+                text.startsWith("CALL_INVITE:") -> {
+                    val parts = text.split(":")
+                    val callId = if (parts.size >= 2) parts[1] else packet.conversationId ?: ""
+                    val callerId = if (parts.size >= 3) parts[2] else packet.senderId
+                    val callerDisplayName = if (parts.size >= 4) parts[3] else callerId
+
+                    if (callSessionState.value == CallSessionState.CONNECTED || callSessionState.value == CallSessionState.OUTGOING_CALL) {
+                        // Busy on another call
+                        val busyPacket = Packet(
+                            msgId = System.currentTimeMillis() and 0x7FFFFFFF,
+                            senderId = myDeviceId,
+                            receiverId = callerId,
+                            conversationId = callId,
+                            seq = ++callSeqCounter,
+                            lang = selectedLanguage.value,
+                            priority = PacketPriority.NORMAL,
+                            text = "CALL_BUSY:$callId",
+                            type = PacketType.CALL_SIGNAL,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        viewModelScope.launch(Dispatchers.IO) {
+                            reliabilityEngine.sendPacket(busyPacket)
+                        }
+                    } else {
+                        incomingCallId.value = callId
+                        incomingCallFrom.value = callerId
+                        incomingCallDisplayName.value = callerDisplayName.ifBlank { callerId }
+                        callSessionState.value = CallSessionState.INCOMING_CALL
+                        callStatusMessage.value = "Incoming call from ${incomingCallDisplayName.value}"
+                        targetNavigationTab.value = "DIAL"
+                        showIncomingCallNotification(incomingCallDisplayName.value ?: callerId, callId)
+                    }
+                }
+                text.startsWith("CALL_ACCEPT:") -> {
+                    val parts = text.split(":")
+                    val callId = if (parts.size >= 2) parts[1] else packet.conversationId
+                    val responderId = if (parts.size >= 3) parts[2] else packet.senderId
+                    val responderDisplayName = if (parts.size >= 4) parts[3] else responderId
+                    if (callSessionState.value == CallSessionState.OUTGOING_CALL && (activeCallId.value == callId || packet.conversationId == activeCallId.value)) {
+                        activeCallPeerId.value = responderId
+                        cancelCallNotification()
+                        startActiveCallSession(responderId, callId ?: activeCallId.value ?: "")
+                        callStatusMessage.value = "Connected with ${responderDisplayName.ifBlank { responderId }}"
+                    }
+                }
+                text.startsWith("CALL_REJECT:") -> {
+                    val parts = text.split(":")
+                    val callId = if (parts.size >= 2) parts[1] else packet.conversationId
+                    if (callSessionState.value == CallSessionState.OUTGOING_CALL && (activeCallId.value == callId || packet.conversationId == activeCallId.value)) {
+                        cancelCallNotification()
+                        terminateCallLocally("${packet.senderId} declined the call")
+                    }
+                }
+                text.startsWith("CALL_BUSY:") -> {
+                    val parts = text.split(":")
+                    val callId = if (parts.size >= 2) parts[1] else packet.conversationId
+                    if (callSessionState.value == CallSessionState.OUTGOING_CALL && (activeCallId.value == callId || packet.conversationId == activeCallId.value)) {
+                        cancelCallNotification()
+                        terminateCallLocally("${packet.senderId} is busy on another call")
+                    }
+                }
+                text.startsWith("CALL_END:") -> {
+                    val parts = text.split(":")
+                    val callId = if (parts.size >= 2) parts[1] else packet.conversationId
+                    if ((callSessionState.value == CallSessionState.CONNECTED && activeCallId.value == callId) ||
+                        (callSessionState.value == CallSessionState.INCOMING_CALL && incomingCallId.value == callId)) {
+                        cancelCallNotification()
+                        terminateCallLocally("Call ended by ${packet.senderId}")
+                    }
+                }
+            }
+            return
+        }
+
+        // Step 13: Handle Dedicated Call Transcript Packets
+        if (packet.type == PacketType.CALL_TRANSCRIPT) {
+            val isCallMatch = callSessionState.value == CallSessionState.CONNECTED &&
+                    packet.conversationId == activeCallId.value &&
+                    !packet.senderId.equals(myDeviceId, ignoreCase = true)
+
+            if (isCallMatch && packet.text.isNotBlank()) {
+                val dedupKey = "${packet.conversationId}_${packet.senderId}_${packet.seq}_${packet.text.trim()}"
+                if (!receivedCallTranscriptKeys.contains(dedupKey)) {
+                    receivedCallTranscriptKeys.add(dedupKey)
+                    val senderName = if (packet.senderId.equals(activeCallPeerId.value, ignoreCase = true)) {
+                        "Peer"
+                    } else {
+                        packet.senderId
+                    }
+                    val currentList = callTranscripts.value.toMutableList()
+                    currentList.add(Pair(senderName, packet.text.trim()))
+                    callTranscripts.value = currentList
+
+                    viewModelScope.launch(Dispatchers.Main) {
+                        try {
+                            ttsEngine.speak(packet.text, packet.lang)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+            return
+        }
+
         if (packet.hasValidCoordinates()) {
             val lat = packet.latitudeDegrees!!
             val lon = packet.longitudeDegrees!!
+            val now = System.currentTimeMillis()
             val currentMap = _trackedPeers.value.toMutableMap()
-            currentMap[packet.senderId] = TrackedPeer(
-                deviceId = packet.senderId,
-                latitude = lat,
-                longitude = lon,
-                accuracyMeters = packet.accuracyMeters,
-                timestamp = packet.timestamp,
-                lastReceivedTime = System.currentTimeMillis()
-            )
-            _trackedPeers.value = currentMap
+            val existing = currentMap[packet.senderId]
+
+            // Step 12 Ordering, Staleness, and Inaccuracy Guards (Requirement 4, 5, 7):
+            val isStaleFix = existing != null && packet.timestamp < existing.timestamp
+            val isDuplicate = existing != null && packet.timestamp == existing.timestamp && packet.seq <= existing.seq
+            val isAncient = (now - packet.timestamp) > 86400000L // > 24 hours old
+
+            if (isStaleFix) {
+                logLocationDiagnostic("RX_REJECT", packet, packet.accuracyMeters, packet.timestamp, now, "Rejected: out-of-order packet older than latest fix")
+            } else if (isDuplicate) {
+                logLocationDiagnostic("RX_REJECT", packet, packet.accuracyMeters, packet.timestamp, now, "Rejected: duplicate sequence packet")
+            } else if (isAncient) {
+                logLocationDiagnostic("RX_REJECT", packet, packet.accuracyMeters, packet.timestamp, now, "Rejected: fix timestamp is older than 24 hours")
+            } else {
+                // Check if substantially less accurate fix arrives immediately after a precise fix without time advance
+                val timeDiffMs = existing?.let { packet.timestamp - it.timestamp } ?: Long.MAX_VALUE
+                val accDiff = if (existing?.accuracyMeters != null && packet.accuracyMeters != null) {
+                    packet.accuracyMeters - existing.accuracyMeters
+                } else 0f
+
+                if (existing != null && timeDiffMs < 3000L && accDiff > 300f) {
+                    logLocationDiagnostic("RX_REJECT", packet, packet.accuracyMeters, packet.timestamp, now, "Rejected: substantially worse accuracy (+${accDiff.toInt()}m) within 3s")
+                } else {
+                    currentMap[packet.senderId] = TrackedPeer(
+                        deviceId = packet.senderId,
+                        latitude = lat,
+                        longitude = lon,
+                        accuracyMeters = packet.accuracyMeters,
+                        timestamp = packet.timestamp,
+                        lastReceivedTime = now,
+                        seq = packet.seq
+                    )
+                    _trackedPeers.value = currentMap
+                    logLocationDiagnostic("RX_ACCEPT", packet, packet.accuracyMeters, packet.timestamp, now, "Accepted fresh real-time location fix")
+                }
+            }
         }
 
         val convId = when {
@@ -1094,8 +1579,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             activePipelineStage.value = "DECODE"
 
-            // Save or update Conversation & Message in Room DB (skip pure telemetry LOCATION packets from polluting Chat DB)
-            if (packet.type != PacketType.LOCATION) {
+            // Save or update Conversation & Message in Room DB (skip pure telemetry LOCATION and dedicated CALL packets from polluting Chat DB)
+            if (packet.type != PacketType.LOCATION && packet.type != PacketType.CALL_SIGNAL && packet.type != PacketType.CALL_TRANSCRIPT) {
                 val conv = ConversationEntity(
                     conversationId = convId,
                     localDeviceId = myDeviceId,
@@ -1114,7 +1599,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         lang = packet.lang.displayName,
                         priority = packet.priority.name,
                         text = packet.text,
-                        receiverId = packet.receiverId,
+                        receiverId = packet.receiverId ?: targetDeptId,
                         departmentId = targetDeptId,
                         conversationId = convId,
                         timestamp = packet.timestamp,
@@ -1126,14 +1611,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            // If currently in a call with this sender, append to live call transcript
-            if (isCallActive.value && activeCallPeerId.value?.equals(packet.senderId, ignoreCase = true) == true && packet.type != PacketType.LOCATION) {
-                val currentList = callTranscripts.value.toMutableList()
-                currentList.add(Pair(packet.senderId, packet.text))
-                callTranscripts.value = currentList
-            }
-
-            if (packet.type != PacketType.LOCATION) {
+            if (packet.type != PacketType.LOCATION && packet.type != PacketType.CALL_SIGNAL && packet.type != PacketType.CALL_TRANSCRIPT && packet.priority != PacketPriority.SOS && packet.type != PacketType.SOS) {
                 showNotification(packet)
             }
 
@@ -1142,6 +1620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Location telemetry beacons are purely for tracking; do NOT interrupt via TTS
                 activePipelineStage.value = "IDLE"
             } else if (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS) {
+                isSosActive.value = true
                 activePipelineStage.value = "TTS"
                 val gps = gpsState.value as? GpsState.Fix
                 sosAlertManager.triggerIncomingSosAlert(packet, gps?.latitude, gps?.longitude)
@@ -1177,21 +1656,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resolveDepartmentId(nameOrId: String?): String? {
         if (nameOrId == null) return null
         val clean = nameOrId.trim()
+        if (clean.isBlank()) return null
         return when {
-            clean.contains("NDRF", ignoreCase = true) -> "NDRF"
+            clean.contains("NDRF", ignoreCase = true) || clean.contains("Rescue", ignoreCase = true) || clean.contains("Search", ignoreCase = true) -> "NDRF"
             clean.contains("Medic", ignoreCase = true) -> "MEDICAL"
             clean.contains("Police", ignoreCase = true) || clean.contains("Woman", ignoreCase = true) || clean.contains("Child", ignoreCase = true) -> "POLICE"
             clean.contains("Fire", ignoreCase = true) || clean.contains("Disaster", ignoreCase = true) -> "FIRE"
-            clean.contains("Railway", ignoreCase = true) -> "RAILWAY"
-            clean.contains("Civil", ignoreCase = true) -> "CIVIL"
-            Department.entries.any { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) } -> {
-                Department.entries.first { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) }.id
+            clean.contains("Railway", ignoreCase = true) || clean.contains("Train", ignoreCase = true) -> "RAILWAY"
+            clean.contains("Civil", ignoreCase = true) || clean.contains("Defence", ignoreCase = true) || clean.contains("Defense", ignoreCase = true) -> "CIVIL"
+            Department.entries.any { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) || it.displayName.equals(clean, ignoreCase = true) } -> {
+                Department.entries.first { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) || it.displayName.equals(clean, ignoreCase = true) }.id
             }
             else -> null
         }
     }
 
     fun isDepartment(nameOrId: String?): Boolean = resolveDepartmentId(nameOrId) != null
+
+    fun areDepartmentsMatching(deptA: String?, deptB: String?): Boolean {
+        if (deptA.isNullOrBlank() || deptB.isNullOrBlank()) return false
+        val normA = resolveDepartmentId(deptA) ?: deptA.trim().uppercase()
+        val normB = resolveDepartmentId(deptB) ?: deptB.trim().uppercase()
+        return normA == normB
+    }
     fun isDirectRecipient(receiverId: String?, myDeviceId: String = identityRepository.getDeviceId()): Boolean {
         if (receiverId.isNullOrBlank()) return false
         if (receiverId.equals(myDeviceId, ignoreCase = true)) return true
@@ -1214,6 +1701,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        private const val CALL_NOTIFICATION_ID = 9999
+
         fun getConversationId(partyA: String, partyB: String): String {
             val a = partyA.trim()
             val b = partyB.trim()
@@ -1222,24 +1711,164 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    val targetNavigationTab = MutableStateFlow<String?>(null)
+    private val notifiedMessageIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+
     private fun showNotification(packet: Packet) {
+        // Step 15: Deduplicate notifications to prevent repeated alerts for retransmissions
+        if (!notifiedMessageIds.add(packet.msgId)) {
+            return
+        }
+
+        // Notification permission check on Android 13+ (API 33)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+        }
+
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val channelId = "itantra_msgs_channel"
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             val channel = android.app.NotificationChannel(
-                "itantra_msgs",
-                "Messages",
+                channelId,
+                "iTantra Field Messages",
                 android.app.NotificationManager.IMPORTANCE_HIGH
-            )
+            ).apply {
+                description = "Tactical offline messages and field dispatch notifications"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 250, 150, 250)
+                lockscreenVisibility = androidx.core.app.NotificationCompat.VISIBILITY_PRIVATE
+            }
             notificationManager.createNotificationChannel(channel)
         }
-        val builder = androidx.core.app.NotificationCompat.Builder(context, "itantra_msgs")
+
+        val tapIntent = android.content.Intent(context, org.coresense.itantra.MainActivity::class.java).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("EXTRA_NAV_TAB", "CHATS")
+            putExtra("EXTRA_CONVERSATION_ID", packet.conversationId)
+            putExtra("EXTRA_SENDER_ID", packet.senderId)
+            putExtra("EXTRA_DEPARTMENT_ID", packet.departmentId)
+        }
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            context,
+            (packet.msgId and 0x7FFFFFFFL).toInt(),
+            tapIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val title = when {
+            packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS -> "🚨 EMERGENCY SOS FROM ${packet.senderId}"
+            !packet.departmentId.isNullOrBlank() -> "[${packet.departmentId}] from ${packet.senderId}"
+            !packet.receiverId.isNullOrBlank() && packet.receiverId != "GLOBAL" -> "Direct Message from ${packet.senderId}"
+            else -> "Broadcast from ${packet.senderId}"
+        }
+
+        // Content privacy: truncate to avoid leaking excessive private payload on lockscreen
+        val safeText = packet.text.trim().take(120)
+
+        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(if (packet.priority == PacketPriority.SOS) "SOS EMERGENCY!" else "Message from ${packet.senderId}")
-            .setContentText(packet.text)
+            .setContentTitle(title)
+            .setContentText(safeText)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
+            .setContentIntent(pendingIntent)
+            .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
 
-        notificationManager.notify(packet.msgId.toInt(), builder.build())
+        try {
+            notificationManager.notify((packet.msgId and 0x7FFFFFFFL).toInt(), builder.build())
+        } catch (_: SecurityException) {
+            // Handled when permission revoked at runtime
+        }
+    }
+
+    fun showIncomingCallNotification(callerDisplayName: String, callId: String) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+        val channelId = "itantra_calls_channel"
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val ringtoneUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE)
+            val audioAttributes = android.media.AudioAttributes.Builder()
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .build()
+
+            val channel = android.app.NotificationChannel(
+                channelId,
+                "iTantra Voice Calls",
+                android.app.NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Incoming voice call alerts"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 500, 250, 500, 250, 500)
+                setSound(ringtoneUri, audioAttributes)
+                lockscreenVisibility = androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val tapIntent = android.content.Intent(context, org.coresense.itantra.MainActivity::class.java).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("EXTRA_NAV_TAB", "DIAL")
+        }
+        val tapPendingIntent = android.app.PendingIntent.getActivity(
+            context,
+            CALL_NOTIFICATION_ID,
+            tapIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val acceptIntent = android.content.Intent(context, org.coresense.itantra.MainActivity::class.java).apply {
+            action = "ACTION_ACCEPT_CALL"
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val acceptPendingIntent = android.app.PendingIntent.getActivity(
+            context,
+            CALL_NOTIFICATION_ID + 1,
+            acceptIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val declineIntent = android.content.Intent(context, org.coresense.itantra.MainActivity::class.java).apply {
+            action = "ACTION_DECLINE_CALL"
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val declinePendingIntent = android.app.PendingIntent.getActivity(
+            context,
+            CALL_NOTIFICATION_ID + 2,
+            declineIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setContentTitle("📞 Incoming Voice Call")
+            .setContentText("Call from $callerDisplayName")
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
+            .setContentIntent(tapPendingIntent)
+            .setFullScreenIntent(tapPendingIntent, true)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .addAction(android.R.drawable.ic_menu_call, "ACCEPT", acceptPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "DECLINE", declinePendingIntent)
+
+        try {
+            notificationManager.notify(CALL_NOTIFICATION_ID, builder.build())
+        } catch (_: SecurityException) {
+        }
+    }
+
+    fun cancelCallNotification() {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+        try {
+            notificationManager.cancel(CALL_NOTIFICATION_ID)
+        } catch (_: Exception) {}
     }
 
     fun runBenchmark() {
@@ -1270,11 +1899,43 @@ data class TrackedPeer(
     val longitude: Double,
     val accuracyMeters: Float? = null,
     val timestamp: Long,
-    val lastReceivedTime: Long = System.currentTimeMillis()
+    val lastReceivedTime: Long = System.currentTimeMillis(),
+    val seq: Int = 0
 ) {
     /**
-     * Stale location detection: considered stale if older than 2 minutes (120,000 ms).
+     * Real-time update status calculation:
+     * - LIVE: Received within last 8 seconds (green)
+     * - UPDATING: Received within last 25 seconds (cyan)
+     * - SIGNAL_WEAK: Accuracy > 50m
+     * - STALE: More than 25 seconds since last update (red/amber)
+     * - DISCONNECTED: Transport link inactive
      */
+    fun getStatus(isConnected: Boolean = true): TrackingStatus {
+        if (!isConnected) return TrackingStatus.DISCONNECTED
+        val ageMs = System.currentTimeMillis() - lastReceivedTime
+        return when {
+            ageMs > 25_000L -> TrackingStatus.STALE
+            ageMs > 8_000L -> TrackingStatus.UPDATING
+            accuracyMeters != null && accuracyMeters > 50f -> TrackingStatus.SIGNAL_WEAK
+            else -> TrackingStatus.LIVE
+        }
+    }
+
     val isStale: Boolean
-        get() = (System.currentTimeMillis() - lastReceivedTime) > 120_000L
+        get() = (System.currentTimeMillis() - lastReceivedTime) > 25_000L
+}
+
+enum class TrackingStatus(val label: String, val colorHex: Long) {
+    LIVE("LIVE", 0xFF00E676),
+    UPDATING("UPDATING", 0xFF00E5FF),
+    SIGNAL_WEAK("SIGNAL WEAK", 0xFFFF9800),
+    STALE("STALE", 0xFFFF5252),
+    DISCONNECTED("DISCONNECTED", 0xFF9E9E9E)
+}
+
+enum class CallSessionState {
+    IDLE,
+    OUTGOING_CALL,
+    INCOMING_CALL,
+    CONNECTED
 }

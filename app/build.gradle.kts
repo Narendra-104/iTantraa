@@ -111,3 +111,14 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+
+tasks.register("copyApkToWorkspace") {
+    doLast {
+        val src = file("build/outputs/apk/debug/app-debug.apk")
+        val dest1 = rootDir.resolve("iTantra-v29.apk")
+        val dest2 = file("C:/Users/Narendra/.gemini/antigravity/brain/c20aa029-fbb7-434b-b6e0-d9cfad7515aa/iTantra-v29.apk")
+        src.copyTo(dest1, overwrite = true)
+        src.copyTo(dest2, overwrite = true)
+        println("Successfully copied APK to workspace and artifacts: " + dest1.length() + " bytes")
+    }
+}

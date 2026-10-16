@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.coresense.itantra.link.ConnectionState
+import org.coresense.itantra.ui.CallSessionState
 import org.coresense.itantra.ui.MainViewModel
 import org.coresense.itantra.ui.theme.DarkSurface
 import org.coresense.itantra.ui.theme.DarkSurfaceVariant
@@ -35,8 +36,11 @@ import org.coresense.itantra.ui.theme.PrimaryNeonGreen
 
 @Composable
 fun DialScreen(viewModel: MainViewModel) {
+    val callSessionState by viewModel.callSessionState.collectAsState()
     val isCallActive by viewModel.isCallActive.collectAsState()
     val activeCallPeerId by viewModel.activeCallPeerId.collectAsState()
+    val incomingCallFrom by viewModel.incomingCallFrom.collectAsState()
+    val incomingCallDisplayName by viewModel.incomingCallDisplayName.collectAsState()
     val isCallMuted by viewModel.isCallMuted.collectAsState()
     val callDuration by viewModel.callDurationSeconds.collectAsState()
     val callStatusMessage by viewModel.callStatusMessage.collectAsState()
@@ -81,11 +85,12 @@ fun DialScreen(viewModel: MainViewModel) {
         list
     }
 
-    // Pulsing animation during active call
+    // Pulsing animation during active call or signaling
+    val isPulsing = callSessionState != CallSessionState.IDLE
     val infiniteTransition = rememberInfiniteTransition(label = "callPulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = if (isCallActive) 1.08f else 1f,
+        targetValue = if (isPulsing) 1.08f else 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(1000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -111,7 +116,7 @@ fun DialScreen(viewModel: MainViewModel) {
                     text = "DIAL / VOICE CALL",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = Color.Black
                 )
                 Text(
                     text = "Hands-free Speech-over-Packet Telephony",
@@ -120,32 +125,39 @@ fun DialScreen(viewModel: MainViewModel) {
                 )
             }
 
-            Surface(
-                color = if (isCallActive) PrimaryNeonGreen.copy(alpha = 0.2f) else DarkSurfaceVariant,
-                shape = RoundedCornerShape(12.dp),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isCallActive) PrimaryNeonGreen else Color.Gray
-                )
-            ) {
-                Text(
-                    text = if (isCallActive) {
-                        val m = callDuration / 60
-                        val s = callDuration % 60
-                        String.format("%02d:%02d", m, s)
-                    } else "IDLE",
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isCallActive) PrimaryNeonGreen else Color.LightGray
-                )
+            if (callSessionState != CallSessionState.IDLE) {
+                Surface(
+                    color = if (callSessionState == CallSessionState.CONNECTED) PrimaryNeonGreen.copy(alpha = 0.2f) else DarkSurfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (callSessionState == CallSessionState.CONNECTED) PrimaryNeonGreen else Color.Gray
+                    )
+                ) {
+                    Text(
+                        text = when (callSessionState) {
+                            CallSessionState.CONNECTED -> {
+                                val m = callDuration / 60
+                                val s = callDuration % 60
+                                String.format("%02d:%02d", m, s)
+                            }
+                            CallSessionState.OUTGOING_CALL -> "CALLING"
+                            CallSessionState.INCOMING_CALL -> "INCOMING"
+                            CallSessionState.IDLE -> ""
+                        },
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (callSessionState == CallSessionState.CONNECTED) PrimaryNeonGreen else Color.LightGray
+                    )
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
         // Target Peer Selection Card (visible when not in call)
-        if (!isCallActive) {
+        if (callSessionState == CallSessionState.IDLE) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = DarkSurface),
@@ -156,7 +168,7 @@ fun DialScreen(viewModel: MainViewModel) {
                     Text(
                         text = "Call Recipient:",
                         fontSize = 12.sp,
-                        color = Color.Gray,
+                        color = Color.LightGray,
                         fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(4.dp))
@@ -164,19 +176,20 @@ fun DialScreen(viewModel: MainViewModel) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(DarkSurfaceVariant, RoundedCornerShape(8.dp))
+                                .background(Color(0xFFF1F5F9), RoundedCornerShape(8.dp))
+                                .border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(8.dp))
                                 .padding(12.dp)
                                 .clickable { peerMenuExpanded = true },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (selectedPeer.isNotBlank()) selectedPeer else "Select peer device to call...",
-                                color = if (selectedPeer.isNotBlank()) Color.White else Color.Gray,
+                                text = if (selectedPeer.isNotBlank()) selectedPeer else "Select Peer",
+                                color = Color.Black,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
-                            Text("▼", color = PrimaryNeonGreen, fontSize = 12.sp)
+                            Text("▼", color = Color.Black, fontSize = 12.sp)
                         }
 
                         DropdownMenu(
@@ -193,8 +206,8 @@ fun DialScreen(viewModel: MainViewModel) {
                                     DropdownMenuItem(
                                         text = { Text(peerId) },
                                         onClick = {
-                                            selectedPeer = peerId
-                                            peerMenuExpanded = false
+                                             selectedPeer = peerId
+                                             peerMenuExpanded = false
                                         }
                                     )
                                 }
@@ -222,27 +235,40 @@ fun DialScreen(viewModel: MainViewModel) {
                 .size(110.dp)
                 .scale(pulseScale)
                 .background(
-                    if (isCallActive) {
-                        if (isCallMuted) Color(0xFFFF9800).copy(alpha = 0.25f)
-                        else PrimaryNeonGreen.copy(alpha = 0.25f)
-                    } else DarkSurface,
+                    when (callSessionState) {
+                        CallSessionState.CONNECTED -> if (isCallMuted) Color(0xFFFF9800).copy(alpha = 0.25f) else PrimaryNeonGreen.copy(alpha = 0.25f)
+                        CallSessionState.OUTGOING_CALL -> Color(0xFF00E5FF).copy(alpha = 0.25f)
+                        CallSessionState.INCOMING_CALL -> Color(0xFFFF9800).copy(alpha = 0.25f)
+                        CallSessionState.IDLE -> DarkSurface
+                    },
                     CircleShape
                 )
                 .border(
                     3.dp,
-                    if (isCallActive) {
-                        if (isCallMuted) Color(0xFFFF9800) else PrimaryNeonGreen
-                    } else Color.Gray,
+                    when (callSessionState) {
+                        CallSessionState.CONNECTED -> if (isCallMuted) Color(0xFFFF9800) else PrimaryNeonGreen
+                        CallSessionState.OUTGOING_CALL -> Color(0xFF00E5FF)
+                        CallSessionState.INCOMING_CALL -> Color(0xFFFF9800)
+                        CallSessionState.IDLE -> Color.Gray
+                    },
                     CircleShape
                 ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (isCallActive) Icons.Default.PhoneInTalk else Icons.Default.Person,
+                imageVector = when (callSessionState) {
+                    CallSessionState.CONNECTED -> Icons.Default.PhoneInTalk
+                    CallSessionState.OUTGOING_CALL -> Icons.Default.Call
+                    CallSessionState.INCOMING_CALL -> Icons.Default.Call
+                    CallSessionState.IDLE -> Icons.Default.Person
+                },
                 contentDescription = null,
-                tint = if (isCallActive) {
-                    if (isCallMuted) Color(0xFFFF9800) else PrimaryNeonGreen
-                } else Color.Gray,
+                tint = when (callSessionState) {
+                    CallSessionState.CONNECTED -> if (isCallMuted) Color(0xFFFF9800) else PrimaryNeonGreen
+                    CallSessionState.OUTGOING_CALL -> Color(0xFF00E5FF)
+                    CallSessionState.INCOMING_CALL -> Color(0xFFFF9800)
+                    CallSessionState.IDLE -> Color.Gray
+                },
                 modifier = Modifier.size(52.dp)
             )
         }
@@ -251,20 +277,30 @@ fun DialScreen(viewModel: MainViewModel) {
 
         // Target Peer Name / Callsign Display
         Text(
-            text = if (isCallActive) (activeCallPeerId ?: "In Call") else (if (selectedPeer.isNotBlank()) selectedPeer else "Select Peer"),
+            text = when (callSessionState) {
+                CallSessionState.CONNECTED -> activeCallPeerId ?: "In Call"
+                CallSessionState.OUTGOING_CALL -> "Calling ${activeCallPeerId ?: selectedPeer}..."
+                CallSessionState.INCOMING_CALL -> "Incoming: ${incomingCallDisplayName ?: incomingCallFrom ?: "Peer"}"
+                CallSessionState.IDLE -> if (selectedPeer.isNotBlank()) selectedPeer else ""
+            },
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.White
+            color = Color.Black
         )
 
         // Status Line
-        Text(
-            text = callStatusMessage,
-            fontSize = 13.sp,
-            color = if (isCallActive) {
-                if (isCallMuted) Color(0xFFFF9800) else PrimaryNeonGreen
-            } else Color.Gray
-        )
+        if (callSessionState != CallSessionState.IDLE && callStatusMessage.isNotBlank()) {
+            Text(
+                text = callStatusMessage,
+                fontSize = 13.sp,
+                color = when (callSessionState) {
+                    CallSessionState.CONNECTED -> if (isCallMuted) Color(0xFFFF9800) else PrimaryNeonGreen
+                    CallSessionState.OUTGOING_CALL -> Color(0xFF00E5FF)
+                    CallSessionState.INCOMING_CALL -> Color(0xFFFF9800)
+                    CallSessionState.IDLE -> Color.Transparent
+                }
+            )
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -353,93 +389,175 @@ fun DialScreen(viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(14.dp))
 
         // Call Control Buttons
-        if (!isCallActive) {
-            Button(
-                onClick = {
-                    if (selectedPeer.isNotBlank()) {
-                        viewModel.startCall(selectedPeer)
-                    }
-                },
-                enabled = selectedPeer.isNotBlank(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = PrimaryNeonGreen,
-                    contentColor = DarkSurface,
-                    disabledContainerColor = Color.DarkGray,
-                    disabledContentColor = Color.Gray
-                ),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Call,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "START CALL",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Mute / Unmute Button
-                OutlinedButton(
-                    onClick = { viewModel.toggleCallMute() },
+        when (callSessionState) {
+            CallSessionState.IDLE -> {
+                Button(
+                    onClick = {
+                        if (selectedPeer.isNotBlank()) {
+                            viewModel.startCall(selectedPeer)
+                        }
+                    },
+                    enabled = selectedPeer.isNotBlank(),
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .height(52.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = if (isCallMuted) Color(0xFFFF9800) else Color.White
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryNeonGreen,
+                        contentColor = DarkSurface,
+                        disabledContainerColor = Color.DarkGray,
+                        disabledContentColor = Color.Gray
                     ),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.5.dp,
-                        if (isCallMuted) Color(0xFFFF9800) else Color.Gray
-                    )
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(
-                        imageVector = if (isCallMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                        imageVector = Icons.Default.Call,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isCallMuted) "UNMUTE" else "MUTE",
+                        text = "START CALL",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                        fontSize = 15.sp
                     )
                 }
-
-                // End Call Button
+            }
+            CallSessionState.OUTGOING_CALL -> {
                 Button(
                     onClick = { viewModel.endCall() },
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .height(52.dp),
-                    shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFFD32F2F),
                         contentColor = Color.White
-                    )
+                    ),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.CallEnd,
                         contentDescription = null,
                         modifier = Modifier.size(20.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "END CALL",
+                        text = "CANCEL CALL",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                        fontSize = 15.sp
                     )
+                }
+            }
+            CallSessionState.INCOMING_CALL -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = { viewModel.acceptIncomingCall() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PrimaryNeonGreen,
+                            contentColor = DarkSurface
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Call,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "ACCEPT",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+
+                    Button(
+                        onClick = { viewModel.rejectIncomingCall() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFD32F2F),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "DECLINE",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
+            CallSessionState.CONNECTED -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Mute / Unmute Button
+                    OutlinedButton(
+                        onClick = { viewModel.toggleCallMute() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (isCallMuted) Color(0xFFFF9800) else Color.White
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.5.dp,
+                            if (isCallMuted) Color(0xFFFF9800) else Color.Gray
+                        )
+                    ) {
+                        Icon(
+                            imageVector = if (isCallMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isCallMuted) "UNMUTE" else "MUTE",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    // End Call Button
+                    Button(
+                        onClick = { viewModel.endCall() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFD32F2F),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallEnd,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "END CALL",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
                 }
             }
         }
