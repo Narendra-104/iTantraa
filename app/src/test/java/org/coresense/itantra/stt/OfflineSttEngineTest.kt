@@ -363,13 +363,14 @@ class OfflineSttEngineTest {
 
     @Test
     fun test23_bundledVsDownloadedModelDetection() {
-        // English and Hindi must be reported as bundled
+        // English, Hindi and Marathi must be reported as bundled
         assertTrue("English must be recognized as bundled", mockRegistry.isBundled(Language.ENGLISH))
         assertTrue("Hindi must be recognized as bundled", mockRegistry.isBundled(Language.HINDI))
+        assertTrue("Marathi must be recognized as bundled", mockRegistry.isBundled(Language.MARATHI))
 
         val otherLanguages = listOf(
             Language.BENGALI, Language.TAMIL, Language.TELUGU,
-            Language.MARATHI, Language.GUJARATI, Language.KANNADA,
+            Language.GUJARATI, Language.KANNADA,
             Language.MALAYALAM, Language.PUNJABI, Language.ODIA
         )
 
@@ -388,15 +389,18 @@ class OfflineSttEngineTest {
 
     @Test
     fun test24_preventionOfDeletingBundledModels() {
-        // Simulate English and Hindi files present
+        // Simulate English, Hindi and Marathi files present
         val enDir = File(mockStorageDir, Language.ENGLISH.code).apply { mkdirs() }
         val enModel = File(enDir, "model.onnx").apply { writeBytes(ByteArray(1024)) }
         val hiDir = File(mockStorageDir, Language.HINDI.code).apply { mkdirs() }
         val hiModel = File(hiDir, "model.onnx").apply { writeBytes(ByteArray(1024)) }
+        val mrDir = File(mockStorageDir, Language.MARATHI.code).apply { mkdirs() }
+        val mrModel = File(mrDir, "model.onnx").apply { writeBytes(ByteArray(1024)) }
 
         mockRegistry.refresh()
         assertTrue(enModel.exists())
         assertTrue(hiModel.exists())
+        assertTrue(mrModel.exists())
 
         // Registry deleteModel MUST refuse to delete bundled models
         val deletedEn = mockRegistry.deleteModel(Language.ENGLISH)
@@ -407,6 +411,10 @@ class OfflineSttEngineTest {
         assertFalse("Registry should refuse to delete bundled Hindi model", deletedHi)
         assertTrue("Hindi model file must still exist", hiModel.exists())
 
+        val deletedMr = mockRegistry.deleteModel(Language.MARATHI)
+        assertFalse("Registry should refuse to delete bundled Marathi model", deletedMr)
+        assertTrue("Marathi model file must still exist", mrModel.exists())
+
         // DownloadManager deleteDownloadedModel MUST return failure for bundled models
         val mgrResultEn = downloadManager.deleteDownloadedModel(Language.ENGLISH)
         assertTrue("DownloadManager must fail when trying to delete bundled English", mgrResultEn.isFailure)
@@ -415,6 +423,10 @@ class OfflineSttEngineTest {
         val mgrResultHi = downloadManager.deleteDownloadedModel(Language.HINDI)
         assertTrue("DownloadManager must fail when trying to delete bundled Hindi", mgrResultHi.isFailure)
         assertTrue("Hindi model file must still exist", hiModel.exists())
+
+        val mgrResultMr = downloadManager.deleteDownloadedModel(Language.MARATHI)
+        assertTrue("DownloadManager must fail when trying to delete bundled Marathi", mgrResultMr.isFailure)
+        assertTrue("Marathi model file must still exist", mrModel.exists())
     }
 
     @Test

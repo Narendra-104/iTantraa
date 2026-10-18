@@ -103,7 +103,15 @@ class ReliabilityEngine(
 
     fun nextSequenceNumber(): Int = seqCounter.getAndIncrement()
 
+    fun sendPacket(packet: Packet) = enqueue(packet)
+
     fun enqueue(packet: Packet) {
+        // Step 12: Prune older unsent location packets for the same sender to prefer newest location and prevent queue buildup
+        if (packet.type == PacketType.LOCATION) {
+            highPriorityQueue.removeIf { it.packet.type == PacketType.LOCATION && it.packet.senderId == packet.senderId }
+            normalPriorityQueue.removeIf { it.packet.type == PacketType.LOCATION && it.packet.senderId == packet.senderId }
+        }
+
         val pending = PendingMessage(
             packet = packet,
             state = DeliveryState.Queued
@@ -215,7 +223,7 @@ class ReliabilityEngine(
                         updateStats()
                     }
 
-                    PacketType.DATA, PacketType.SOS, PacketType.LOCATION -> {
+                    PacketType.DATA, PacketType.SOS, PacketType.LOCATION, PacketType.CALL_SIGNAL, PacketType.CALL_TRANSCRIPT -> {
                         // Send ACK back immediately
                         sendAck(packet)
 

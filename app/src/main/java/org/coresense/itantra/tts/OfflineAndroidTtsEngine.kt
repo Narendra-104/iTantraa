@@ -43,6 +43,13 @@ class OfflineAndroidTtsEngine(
         }
     }
 
+    override fun isReady(): Boolean = isInitialized
+
+    suspend fun awaitInitialization(timeoutMs: Long = 3000L): Boolean {
+        if (isInitialized) return true
+        return kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { initDeferred.await() } ?: false
+    }
+
     override fun isLanguageAvailable(lang: Language): TtsStatus {
         val engine = tts ?: return TtsStatus.NOT_INSTALLED
         if (!isInitialized) return TtsStatus.NOT_INSTALLED

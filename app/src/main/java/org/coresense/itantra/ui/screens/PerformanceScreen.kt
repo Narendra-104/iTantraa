@@ -211,10 +211,10 @@ fun PerformanceScreen(
                         Column(horizontalAlignment = Alignment.End) {
                             Text(text = "Protobuf Wire Payload", fontSize = 10.sp, color = Color.Gray)
                             Text(
-                                text = if (protoBytes > 0) "$protoBytes bytes (Wire)" else "~42 bytes",
+                                text = if (protoBytes > 0) "$protoBytes bytes (Wire)" else "Not measured",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = PrimaryNeonGreen
+                                color = if (protoBytes > 0) PrimaryNeonGreen else Color.Gray
                             )
                         }
                     }
@@ -227,14 +227,14 @@ fun PerformanceScreen(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MetricCard(
                     title = "RAM (PSS)",
-                    value = String.format("%.1f MB", liveMetrics.ramPssMb),
+                    value = if (liveMetrics.ramPssMb > 0f) String.format(java.util.Locale.US, "%.1f MB", liveMetrics.ramPssMb) else "Not measured",
                     subtitle = "App memory footprint",
                     color = PrimaryNeonGreen,
                     modifier = Modifier.weight(1f)
                 )
                 MetricCard(
                     title = "CPU USAGE",
-                    value = String.format("%.1f%%", liveMetrics.cpuUsagePercent),
+                    value = String.format(java.util.Locale.US, "%.1f%%", liveMetrics.cpuUsagePercent),
                     subtitle = "/proc/self/stat deltas",
                     color = Color(0xFF00E5FF),
                     modifier = Modifier.weight(1f)
@@ -246,15 +246,15 @@ fun PerformanceScreen(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MetricCard(
                     title = "ONE-WAY LATENCY",
-                    value = if (liveMetrics.lastLatencyMs > 0) "${liveMetrics.lastLatencyMs} ms" else "< 15 ms",
-                    subtitle = "Clock-safe (RTT / 2)",
+                    value = if (liveMetrics.lastLatencyMs != null) "${liveMetrics.lastLatencyMs} ms" else "Not measured",
+                    subtitle = if (liveMetrics.lastLatencyMs != null) "Clock-safe (RTT / 2)" else "Awaiting message ACK",
                     color = Color(0xFFFFB300),
                     modifier = Modifier.weight(1f)
                 )
                 MetricCard(
                     title = "REAL-TIME FACTOR",
-                    value = if (liveMetrics.lastUtteranceRtf > 0) String.format("%.2f x", liveMetrics.lastUtteranceRtf) else "0.24 x",
-                    subtitle = "Processing / Duration",
+                    value = if (liveMetrics.lastUtteranceRtf != null) String.format(java.util.Locale.US, "%.2f x", liveMetrics.lastUtteranceRtf) else "Not measured",
+                    subtitle = if (liveMetrics.lastUtteranceRtf != null) "Processing / Duration" else "Awaiting voice transmission",
                     color = PrimaryNeonGreen,
                     modifier = Modifier.weight(1f)
                 )
@@ -265,15 +265,15 @@ fun PerformanceScreen(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MetricCard(
                     title = "COMPRESSION RATIO",
-                    value = if (liveMetrics.lastCompressionRatio > 0) String.format("%.0f:1", liveMetrics.lastCompressionRatio) else "380:1",
-                    subtitle = "PCM captured vs text packet",
+                    value = if (liveMetrics.lastCompressionRatio != null) String.format(java.util.Locale.US, "%.0f:1", liveMetrics.lastCompressionRatio) else "Not measured",
+                    subtitle = if (liveMetrics.lastCompressionRatio != null) "PCM captured vs text packet" else "Awaiting voice conversion",
                     color = PrimaryNeonGreen,
                     modifier = Modifier.weight(1f)
                 )
                 MetricCard(
                     title = "PACKET LOSS",
-                    value = String.format("%.1f%%", reliabilityStats.packetLossPercent),
-                    subtitle = "${reliabilityStats.acksReceived}/${reliabilityStats.packetsSent} ACKed (${reliabilityStats.retriesCount} retries)",
+                    value = String.format(java.util.Locale.US, "%.1f%%", reliabilityStats.packetLossPercent),
+                    subtitle = if (reliabilityStats.packetsSent > 0) "${reliabilityStats.acksReceived}/${reliabilityStats.packetsSent} ACKed (${reliabilityStats.retriesCount} retries)" else "Awaiting packet transmission",
                     color = if (reliabilityStats.packetLossPercent > 10f) Color(0xFFFF1744) else PrimaryNeonGreen,
                     modifier = Modifier.weight(1f)
                 )

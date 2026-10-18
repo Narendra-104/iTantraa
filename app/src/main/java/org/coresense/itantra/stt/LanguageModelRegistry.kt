@@ -56,9 +56,9 @@ open class LanguageModelRegistry(
         refresh()
     }
 
-    fun isBundled(lang: Language): Boolean = (lang == Language.ENGLISH || lang == Language.HINDI)
+    fun isBundled(lang: Language): Boolean = (lang == Language.ENGLISH || lang == Language.HINDI || lang == Language.MARATHI)
 
-    fun getBundledLanguages(): List<Language> = listOf(Language.ENGLISH, Language.HINDI)
+    fun getBundledLanguages(): List<Language> = listOf(Language.ENGLISH, Language.HINDI, Language.MARATHI)
 
     fun refresh() {
         val rootDir = getModelsStorageDirectory()
@@ -81,10 +81,10 @@ open class LanguageModelRegistry(
             val defaultSizeMb = when (lang) {
                 Language.HINDI -> 230.3f
                 Language.ENGLISH -> 116.3f
+                Language.MARATHI -> 117.4f
                 Language.BENGALI -> 82.0f
                 Language.TAMIL -> 85.0f
                 Language.TELUGU -> 84.0f
-                Language.MARATHI -> 79.0f
                 Language.GUJARATI -> 77.0f
                 Language.KANNADA -> 83.0f
                 Language.MALAYALAM -> 86.0f
@@ -96,6 +96,7 @@ open class LanguageModelRegistry(
                 when (lang) {
                     Language.ENGLISH -> "Wav2Vec2-Base-960h CTC ONNX"
                     Language.HINDI -> "AI4Bharat IndicWav2Vec Hindi CTC ONNX"
+                    Language.MARATHI -> "AI4Bharat Vakyansh Marathi Wav2Vec2 CTC ONNX"
                     else -> "AI4Bharat IndicConformer ONNX"
                 }
             } else {

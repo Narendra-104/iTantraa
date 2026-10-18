@@ -28,6 +28,7 @@ object EnglishSpeechNormalizer {
         "ambylance" to "ambulance",
         "hospitl" to "hospital",
         "haspital" to "hospital",
+        "hospatal" to "hospital",
         "hospitel" to "hospital",
         "imergensi" to "emergency",
         "emergensy" to "emergency",
@@ -51,6 +52,7 @@ object EnglishSpeechNormalizer {
         "medcal" to "medical",
         "doktr" to "doctor",
         "docter" to "doctor",
+        "dockter" to "doctor",
         "injurd" to "injured",
         "injerd" to "injured",
         "trapt" to "trapped" ,
@@ -122,7 +124,22 @@ object EnglishSpeechNormalizer {
         "nau" to "now",
         "kwik" to "quick",
         "kwick" to "quick",
-        "mor" to "more"
+        "mor" to "more",
+        "diffrent" to "different",
+        "differant" to "different",
+        "speach" to "speech",
+        "spech" to "speech",
+        "lisn" to "listen",
+        "listn" to "listen",
+        "spik" to "speak",
+        "spikin" to "speaking",
+        "spiking" to "speaking",
+        "respnd" to "respond",
+        "propely" to "properly",
+        "proparly" to "properly",
+        "mesij" to "message",
+        "mesaj" to "message",
+        "radil" to "radio"
     )
 
     // Canonical vocabulary for fuzzy alignment
@@ -136,10 +153,70 @@ object EnglishSpeechNormalizer {
         "broken", "collapse", "collapsed", "civil", "defence", "station",
         "vehicle", "traffic", "blocked", "immediate", "immediately", "request",
         "requesting", "coordinates", "dispatched", "dispatch", "team", "route",
-        "clear", "close", "closed", "injured", "alive", "supplies", "food",
+        "clear", "close", "closed", "alive", "supplies", "food",
         "shelter", "blankets", "first", "aid", "rescue", "rescued", "report",
-        "reported", "here", "there", "where", "what", "when", "this", "that"
+        "reported", "here", "there", "where", "what", "when", "this", "that",
+        "different", "speech", "listen", "respond", "properly", "speaking",
+        "hearing", "message", "contact", "support"
     )
+
+    // Comprehensive standard English conversational vocabulary.
+    // Words in this set MUST NEVER be mutated by fuzzy emergency matching.
+    private val knownEnglishWords: Set<String> = buildSet {
+        addAll(canonicalLexicon)
+        // Common conversational pronouns and determiners
+        addAll(listOf(
+            "i", "me", "my", "mine", "myself", "you", "your", "yours", "yourself",
+            "he", "him", "his", "himself", "she", "her", "hers", "herself",
+            "it", "its", "itself", "we", "us", "our", "ours", "ourselves",
+            "they", "them", "their", "theirs", "themselves",
+            "a", "an", "the", "this", "that", "these", "those",
+            "all", "any", "both", "each", "every", "few", "more", "most", "much",
+            "many", "neither", "no", "none", "one", "other", "several", "some", "such"
+        ))
+        // Common verbs & auxiliary verbs
+        addAll(listOf(
+            "is", "am", "are", "was", "were", "be", "being", "been",
+            "have", "has", "had", "having", "do", "does", "did", "doing", "done",
+            "can", "could", "shall", "should", "will", "would", "may", "might", "must",
+            "say", "says", "said", "saying", "speak", "speaks", "spoke", "spoken", "speaking", "speech",
+            "tell", "tells", "told", "telling", "talk", "talks", "talked", "talking",
+            "listen", "listens", "listened", "listening", "hear", "hears", "heard", "hearing",
+            "ask", "asks", "asked", "asking", "answer", "answers", "answered", "answering",
+            "go", "goes", "went", "gone", "going", "come", "comes", "came", "coming",
+            "get", "gets", "got", "getting", "make", "makes", "made", "making",
+            "take", "takes", "took", "taken", "taking", "see", "saw", "seen", "seeing",
+            "look", "looks", "looked", "looking", "give", "gives", "gave", "given", "giving",
+            "find", "finds", "found", "finding", "think", "thinks", "thought", "thinking",
+            "know", "knows", "knew", "known", "knowing", "want", "wants", "wanted", "wanting",
+            "need", "needs", "needed", "needing", "feel", "feels", "felt", "feeling",
+            "try", "tries", "tried", "trying", "leave", "leaves", "left", "leaving",
+            "call", "calls", "called", "calling", "keep", "keeps", "kept", "keeping",
+            "hold", "holds", "held", "holding", "bring", "brings", "brought", "bringing",
+            "send", "sends", "sent", "sending", "receive", "receives", "received", "receiving",
+            "stand", "stands", "stood", "standing", "stay", "stays", "stayed", "staying",
+            "wait", "waits", "waited", "waiting", "walk", "walks", "walked", "walking",
+            "run", "runs", "ran", "running", "move", "moves", "moved", "moving",
+            "live", "lives", "lived", "living", "work", "works", "worked", "working",
+            "stop", "stops", "stopped", "stopping", "start", "starts", "started", "starting",
+            "respond", "responds", "responded", "responding", "check", "checks", "checked", "checking"
+        ))
+        // Common conversational adjectives, adverbs, and conjunctions
+        addAll(listOf(
+            "good", "better", "best", "bad", "worse", "worst", "fine", "great", "well",
+            "ok", "okay", "roger", "copy", "safe", "ready", "sound", "clear", "clean",
+            "right", "wrong", "true", "false", "new", "old", "first", "last", "long",
+            "short", "high", "low", "big", "small", "large", "little", "different", "same",
+            "proper", "properly", "fast", "slow", "quick", "quickly", "hard", "easy",
+            "early", "late", "now", "soon", "later", "today", "tonight", "tomorrow", "yesterday",
+            "always", "never", "sometimes", "often", "usually", "again", "already", "still",
+            "very", "too", "quite", "really", "almost", "just", "only", "also", "even",
+            "here", "there", "where", "how", "when", "why", "what", "which", "who", "whom",
+            "and", "but", "or", "so", "because", "if", "as", "than", "that", "though",
+            "with", "without", "for", "from", "at", "by", "in", "on", "into", "to", "over", "under",
+            "food", "water", "blanket", "line", "wire", "radio", "phone", "device", "battery"
+        ))
+    }
 
     fun normalize(rawText: String): String {
         if (rawText.isBlank()) return ""
@@ -161,16 +238,17 @@ object EnglishSpeechNormalizer {
         val normalizedWords = words.map { word ->
             // Direct phonetic map lookup
             phoneticMap[word] ?: run {
-                // If already a known canonical word, leave untouched
-                if (canonicalLexicon.contains(word)) {
+                // If already a known standard English word, NEVER corrupt it with emergency fuzzy match
+                if (knownEnglishWords.contains(word)) {
                     word
-                } else if (word.length >= 4) {
-                    // Check Levenshtein fuzzy distance against canonical lexicon
+                } else if (word.length >= 5) {
+                    // Check Levenshtein fuzzy distance against canonical emergency lexicon ONLY for unknown non-dictionary words
                     var bestMatch: String? = null
                     var minDistance = Int.MAX_VALUE
                     val maxAllowedDistance = if (word.length >= 7) 2 else 1
 
                     for (canonical in canonicalLexicon) {
+                        if (kotlin.math.abs(word.length - canonical.length) > maxAllowedDistance) continue
                         val dist = levenshteinDistance(word, canonical)
                         if (dist <= maxAllowedDistance && dist < minDistance) {
                             minDistance = dist

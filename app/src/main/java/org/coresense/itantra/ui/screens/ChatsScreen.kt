@@ -3,16 +3,18 @@ package org.coresense.itantra.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,6 +36,8 @@ import java.util.*
 
 @Composable
 fun ChatsScreen(viewModel: MainViewModel) {
+    val selectedLang by viewModel.selectedLanguage.collectAsState()
+    val strings = remember(selectedLang) { org.coresense.itantra.ui.i18n.AppLocalization.getStrings(selectedLang) }
     val messages by viewModel.messages.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val discoveredPeers by viewModel.discoveredPeers.collectAsState()
@@ -56,12 +60,12 @@ fun ChatsScreen(viewModel: MainViewModel) {
         list.add("ALL")
         list.add("GLOBAL")
         connectedPeer?.let {
-            if (it.id != "hotspot_broadcast" && !it.id.equals(myDeviceId, ignoreCase = true) && !list.contains(it.id)) {
+            if (!it.id.equals(myDeviceId, ignoreCase = true) && !list.contains(it.id)) {
                 list.add(it.id)
             }
         }
         discoveredPeers.forEach { p ->
-            if (p.id != "hotspot_broadcast" && !p.id.equals(myDeviceId, ignoreCase = true) && !list.contains(p.id)) {
+            if (!p.id.equals(myDeviceId, ignoreCase = true) && !list.contains(p.id)) {
                 list.add(p.id)
             }
         }
@@ -83,61 +87,145 @@ fun ChatsScreen(viewModel: MainViewModel) {
 
     val resolvedDept = remember(selectedRecipient) { viewModel.resolveDepartmentId(selectedRecipient) }
 
-    val filteredMessages = remember(messages, selectedRecipient, currentConversationId, resolvedDept, myDeviceId) {
+    val filteredMessages = remember(messages, selectedRecipient, currentConversationId, resolvedDept, myDeviceId, connectedPeer) {
         val baseMessages = messages.filter { !it.text.startsWith("[TRACK-ME]") }
         when (selectedRecipient) {
             "ALL" -> baseMessages
             "GLOBAL" -> baseMessages.filter { msg ->
                 // In GLOBAL channel, display:
-                // 1. Broadcast messages (receiverId is null or "GLOBAL")
-                // 2. Direct incoming messages addressed to this device (so incoming messages are never missed!)
-                // 3. Outgoing messages sent by this device to GLOBAL/broadcast
-                val isBroadcast = msg.receiverId.isNullOrBlank() || msg.receiverId.equals("GLOBAL", ignoreCase = true)
+                // 1. General broadcasts (receiverId is null/GLOBAL/hotspot and not addressed to a specific department)
+                // 2. SOS emergency alerts (always visible in Global Feed)
+                // 3. Direct incoming messages addressed to this device
+                // 4. Outgoing messages sent by this device to GLOBAL/broadcast
+                val isSos = msg.priority.equals("SOS", ignoreCase = true)
+                val isGeneralBroadcast = (msg.receiverId.isNullOrBlank() || msg.receiverId.equals("GLOBAL", ignoreCase = true) || msg.receiverId.equals("hotspot_broadcast", ignoreCase = true)) && msg.departmentId == null
+                val isBroadcast = isGeneralBroadcast || isSos
                 val isDirectToMe = msg.isIncoming && (msg.receiverId.equals(myDeviceId, ignoreCase = true) || viewModel.isDirectRecipient(msg.receiverId, myDeviceId))
-                val isMyBroadcast = !msg.isIncoming && isBroadcast
+                val isMyBroadcast = !msg.isIncoming && (isGeneralBroadcast || isSos)
                 isBroadcast || isDirectToMe || isMyBroadcast
             }
             else -> baseMessages.filter { msg ->
+                val isConnectedTarget = connectedPeer != null && (
+                    selectedRecipient.equals(connectedPeer.id, ignoreCase = true) ||
+                    selectedRecipient.equals(connectedPeer.address, ignoreCase = true) ||
+                    selectedRecipient.equals(connectedPeer.name, ignoreCase = true) ||
+                    selectedRecipient.equals("hotspot_broadcast", ignoreCase = true)
+                )
+
+                val matchesConnectedPeer = isConnectedTarget && (
+                    msg.receiverId.equals(connectedPeer?.id, ignoreCase = true) ||
+                    msg.senderId.equals(connectedPeer?.id, ignoreCase = true) ||
+                    msg.receiverId.equals(connectedPeer?.address, ignoreCase = true) ||
+                    msg.senderId.equals(connectedPeer?.address, ignoreCase = true) ||
+                    msg.receiverId.equals("hotspot_broadcast", ignoreCase = true) ||
+                    (viewModel.currentTransportType.value == org.coresense.itantra.link.TransportType.BLUETOOTH_RFCOMM && !msg.senderId.equals(myDeviceId, ignoreCase = true)) ||
+                    (viewModel.currentTransportType.value == org.coresense.itantra.link.TransportType.BLUETOOTH_RFCOMM && !msg.isIncoming)
+                )
+
                 (currentConversationId != null && msg.conversationId == currentConversationId) ||
-                (resolvedDept != null && msg.departmentId.equals(resolvedDept, ignoreCase = true)) ||
+                (resolvedDept != null && (
+                    viewModel.areDepartmentsMatching(msg.departmentId, resolvedDept) ||
+                    viewModel.areDepartmentsMatching(msg.receiverId, resolvedDept)
+                )) ||
                 msg.receiverId.equals(selectedRecipient, ignoreCase = true) ||
-                msg.senderId.equals(selectedRecipient, ignoreCase = true)
+                msg.senderId.equals(selectedRecipient, ignoreCase = true) ||
+                matchesConnectedPeer
             }
         }
     }
 
-    val topQuestions = listOf(
-        "Need immediate assistance.",
-        "What is your status?",
-        "Send backup now.",
-        "Area is clear.",
-        "Heading to checkpoint."
-    )
+    val topQuestions = remember {
+        listOf(
+            "Need immediate assistance.",
+            "What is your status and location?",
+            "Send backup and medical supplies.",
+            "Area secured and checkpoint clear.",
+            "Heading towards target coordinates.",
+            "Casualty count update requested.",
+            "Route blocked, requesting alternate path.",
+            "All personnel accounted for."
+        )
+    }
+
+    var isSendingQuestion by remember { mutableStateOf(false) }
 
     if (showTopQuestions) {
         AlertDialog(
             onDismissRequest = { showTopQuestions = false },
-            title = { Text("Top Questions", color = Color.White) },
+            title = {
+                Text(
+                    text = "Quick Dispatch Questions",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Recipient: $selectedRecipient",
+                        fontSize = 11.sp,
+                        color = PrimaryNeonGreen,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    HorizontalDivider(color = Color.DarkGray)
                     topQuestions.forEach { question ->
-                        Text(
-                            text = question,
-                            color = PrimaryNeonGreen,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    viewModel.sendTextMessage(
-                                        text = question,
-                                        priority = PacketPriority.NORMAL,
-                                        receiverId = selectedRecipient,
-                                        conversationId = currentConversationId
-                                    )
-                                    showTopQuestions = false
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = question,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    TextButton(
+                                        onClick = {
+                                            inputText = question
+                                            showTopQuestions = false
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("Edit in Composer", color = Color.LightGray, fontSize = 11.sp)
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Button(
+                                        onClick = {
+                                            if (!isSendingQuestion) {
+                                                isSendingQuestion = true
+                                                viewModel.sendTextMessage(
+                                                    text = question,
+                                                    priority = PacketPriority.NORMAL,
+                                                    receiverId = selectedRecipient,
+                                                    conversationId = currentConversationId
+                                                )
+                                                showTopQuestions = false
+                                                isSendingQuestion = false
+                                            }
+                                        },
+                                        enabled = !isSendingQuestion,
+                                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonGreen),
+                                        shape = RoundedCornerShape(6.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("Send", color = DarkSurface, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
-                                .padding(12.dp)
-                        )
-                        Divider(color = Color.DarkGray)
+                            }
+                        }
                     }
                 }
             },
@@ -186,7 +274,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = if (isAutoTts) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                        imageVector = if (isAutoTts) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
                         contentDescription = if (isAutoTts) "Disable Auto-Read" else "Enable Auto-Read",
                         tint = if (isAutoTts) PrimaryNeonGreen else Color.LightGray,
                         modifier = Modifier.size(16.dp)
@@ -235,7 +323,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
             }
         }
         
-        Divider(color = Color.Gray)
+        HorizontalDivider(color = Color.Gray)
 
         // Active Speech Status Banner (if TTS is speaking)
         if (isTtsSpeaking) {
@@ -257,7 +345,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.VolumeUp,
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                             contentDescription = null,
                             tint = PrimaryNeonGreen,
                             modifier = Modifier.size(18.dp)
@@ -381,7 +469,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Icon(
-                                                imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.VolumeUp,
+                                                imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
                                                 contentDescription = if (isPlayingThis) "Stop Reading" else "Read Aloud",
                                                 tint = if (isPlayingThis) PrimaryNeonGreen else Color.White,
                                                 modifier = Modifier.size(20.dp)
@@ -427,7 +515,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
             }
         }
 
-        Divider(color = Color.Gray)
+        HorizontalDivider(color = Color.Gray)
 
         // Input Area
         Row(
@@ -455,7 +543,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
                 value = inputText,
                 onValueChange = { inputText = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Type message...") },
+                placeholder = { Text(strings.typeMessageHint) },
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = PrimaryNeonGreen,
                     unfocusedBorderColor = Color.Gray,
@@ -485,7 +573,7 @@ fun ChatsScreen(viewModel: MainViewModel) {
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
+                    contentDescription = strings.sendBtn,
                     tint = DarkSurface
                 )
             }

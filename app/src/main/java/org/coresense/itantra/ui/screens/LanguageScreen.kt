@@ -94,11 +94,11 @@ fun LanguageScreen(
                                                 RoundedCornerShape(8.dp)
                                             )
                                             .clickable {
+                                                viewModel.setAppLanguage(lang)
                                                 if (isInstalled) {
-                                                    viewModel.setAppLanguage(lang)
                                                     statusMessage = null
                                                 } else {
-                                                    statusMessage = "${lang.displayName} model not installed. Pre-installed: English & Hindi. You can download ${lang.displayName} in Settings."
+                                                    statusMessage = "${lang.displayName} STT model not pre-installed. Pre-installed: English, Hindi & Marathi."
                                                 }
                                             }
                                             .padding(vertical = 12.dp, horizontal = 4.dp),
@@ -178,7 +178,7 @@ fun LanguageScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryNeonGreen)
             ) {
                 Text(
-                    text = "Next",
+                    text = strings.nextBtn,
                     color = DarkSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp

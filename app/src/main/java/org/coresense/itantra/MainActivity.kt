@@ -171,6 +171,9 @@ class MainActivity : ComponentActivity() {
         if (intent.getBooleanExtra("EXTRA_SILENCE_SOS", false)) {
             viewModel.cancelActiveSos()
         }
+        if (intent.getBooleanExtra("EXTRA_SOS_ALERT", false)) {
+            viewModel.targetNavigationTab.value = "SOS"
+        }
         when (intent.action) {
             "ACTION_ACCEPT_CALL" -> {
                 viewModel.acceptIncomingCall()

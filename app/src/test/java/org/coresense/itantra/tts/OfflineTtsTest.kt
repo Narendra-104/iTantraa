@@ -270,6 +270,99 @@ class OfflineTtsTest {
         assertFalse(engine.isSpeaking)
         assertNull(engine.lastSpokenText)
     }
+
+    // -------------------------------------------------------------------------
+    // Step 11: Dedicated TTS Studio Tests (Speak, Stop, Clear, Voice Guidance)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun testCustomTextSpeakEmptyStringNoOp() = runBlocking {
+        val engine = FakeOfflineTtsEngine()
+        engine.setVoiceAvailable(Language.HINDI, TtsStatus.SYSTEM_TTS_OFFLINE)
+        val controller = PlaybackSessionController(engine)
+
+        controller.speakCustomText("   ", Language.HINDI)
+
+        assertFalse(engine.isSpeaking)
+        assertNull(engine.lastSpokenText)
+        assertEquals("Enter text to speak", controller.ttsStatusMessage.value)
+    }
+
+    @Test
+    fun testCustomTextSpeakValidDispatchesToEngine() = runBlocking {
+        val engine = FakeOfflineTtsEngine()
+        engine.setVoiceAvailable(Language.HINDI, TtsStatus.SYSTEM_TTS_OFFLINE)
+        val controller = PlaybackSessionController(engine)
+
+        controller.speakCustomText("आई-तंत्रा ऑफ़लाइन आपातकालीन वाक् स्टूडियो", Language.HINDI)
+
+        assertEquals("आई-तंत्रा ऑफ़लाइन आपातकालीन वाक् स्टूडियो", engine.lastSpokenText)
+        assertEquals(Language.HINDI, engine.lastSpokenLang)
+        assertFalse(engine.lastWasEmergency)
+        assertEquals("Finished speaking (Hindi)", controller.ttsStatusMessage.value)
+    }
+
+    @Test
+    fun testStudioStopActionCancelsPlaybackAndClearsSpeaking() = runBlocking {
+        val engine = FakeOfflineTtsEngine()
+        engine.setVoiceAvailable(Language.ENGLISH, TtsStatus.SYSTEM_TTS_OFFLINE)
+        val controller = PlaybackSessionController(engine)
+
+        controller.speakCustomText("Testing stop action in studio", Language.ENGLISH)
+        controller.isTtsSpeaking.value = true
+
+        controller.stopPlayback()
+
+        assertFalse(engine.isSpeaking)
+        assertFalse(controller.isTtsSpeaking.value)
+        assertEquals("Stopped", controller.ttsStatusMessage.value)
+    }
+
+    @Test
+    fun testStudioClearActionStopsPlaybackAndResetsState() = runBlocking {
+        val engine = FakeOfflineTtsEngine()
+        engine.setVoiceAvailable(Language.BENGALI, TtsStatus.SYSTEM_TTS_OFFLINE)
+        val controller = PlaybackSessionController(engine)
+
+        controller.speakCustomText("জরুরি বার্তা", Language.BENGALI)
+        controller.clearInput()
+
+        assertFalse(engine.isSpeaking)
+        assertFalse(controller.isTtsSpeaking.value)
+        assertEquals("Stopped", controller.ttsStatusMessage.value)
+    }
+
+    @Test
+    fun testVoiceAvailabilityGuidanceWhenOfflineVoiceMissing() = runBlocking {
+        val engine = FakeOfflineTtsEngine()
+        engine.setVoiceAvailable(Language.TAMIL, TtsStatus.NOT_INSTALLED)
+        val controller = PlaybackSessionController(engine)
+
+        controller.speakCustomText("வணக்கம்", Language.TAMIL)
+
+        assertFalse(engine.isSpeaking)
+        assertNull(engine.lastSpokenText)
+        assertTrue(
+            controller.ttsStatusMessage.value?.contains("Install voice data in Android Settings") == true
+        )
+    }
+
+    @Test
+    fun testTtsEngineReadinessState() {
+        val engine = FakeOfflineTtsEngine()
+        assertTrue("Engine must report ready", engine.isReady())
+        val controller = PlaybackSessionController(engine)
+        assertTrue("Controller must report ready", controller.isTtsReady.value)
+    }
+
+    @Test
+    fun testAllElevenLanguagesSamplePhrasesPresent() {
+        val sampleLanguages = org.coresense.itantra.ui.screens.ttsSamplePhrases.map { it.language }.toSet()
+        for (lang in Language.entries) {
+            assertTrue("Sample phrases must contain an entry for ${lang.displayName}", sampleLanguages.contains(lang))
+        }
+        assertEquals(11, org.coresense.itantra.ui.screens.ttsSamplePhrases.size)
+    }
 }
 
 /**
@@ -278,8 +371,9 @@ class OfflineTtsTest {
 private class PlaybackSessionController(val ttsEngine: FakeOfflineTtsEngine) {
     val isAutoTtsEnabled = MutableStateFlow(true)
     val isTtsSpeaking = MutableStateFlow(false)
+    val isTtsReady = MutableStateFlow(true)
     val currentlyPlayingMessageId = MutableStateFlow<Long?>(null)
-    val ttsStatusMessage = MutableStateFlow<String?>("Offline TTS Ready")
+    val ttsStatusMessage = MutableStateFlow<String?>("Ready")
 
     fun toggleAutoTts(enabled: Boolean? = null) {
         val next = enabled ?: !isAutoTtsEnabled.value
@@ -287,6 +381,34 @@ private class PlaybackSessionController(val ttsEngine: FakeOfflineTtsEngine) {
         if (!next) {
             stopPlayback()
         }
+    }
+
+    suspend fun speakCustomText(text: String, lang: Language) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) {
+            ttsStatusMessage.value = "Enter text to speak"
+            return
+        }
+        stopPlayback()
+        isTtsSpeaking.value = true
+        val status = ttsEngine.isLanguageAvailable(lang)
+        if (status != TtsStatus.SYSTEM_TTS_OFFLINE && status != TtsStatus.OFFLINE_READY) {
+            ttsStatusMessage.value = "No offline voice for ${lang.displayName} ($status). Install voice data in Android Settings."
+            isTtsSpeaking.value = false
+            return
+        }
+        ttsStatusMessage.value = "Speaking in ${lang.displayName}..."
+        val res = ttsEngine.speak(trimmed, lang, isEmergency = false)
+        if (res.isSuccess) {
+            ttsStatusMessage.value = "Finished speaking (${lang.displayName})"
+        } else {
+            ttsStatusMessage.value = res.exceptionOrNull()?.message ?: "Playback error"
+        }
+        isTtsSpeaking.value = false
+    }
+
+    fun clearInput() {
+        stopPlayback()
     }
 
     suspend fun togglePlayMessage(msgId: Long, text: String, lang: Language) {
@@ -318,6 +440,7 @@ private class PlaybackSessionController(val ttsEngine: FakeOfflineTtsEngine) {
         ttsEngine.stop()
         currentlyPlayingMessageId.value = null
         isTtsSpeaking.value = false
+        ttsStatusMessage.value = "Stopped"
     }
 
     suspend fun handleIncomingPacket(packet: Packet) {
@@ -347,6 +470,8 @@ private class FakeOfflineTtsEngine : TtsEngine {
     fun setVoiceAvailable(lang: Language, status: TtsStatus) {
         availabilityMap[lang] = status
     }
+
+    override fun isReady(): Boolean = true
 
     override fun isLanguageAvailable(lang: Language): TtsStatus {
         return availabilityMap[lang] ?: TtsStatus.NOT_INSTALLED

@@ -3,6 +3,8 @@ package org.coresense.itantra.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -47,18 +49,23 @@ fun ReceiverScreen(
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val coroutineScope = rememberCoroutineScope()
 
-    // UI View Filter ONLY - does NOT alter local identity or packet routing
-    var selectedViewFilter by remember { mutableStateOf("ALL") }
+    val isSosActive by viewModel.isSosActive.collectAsState()
     val localDeptId = identityState?.departmentId
     val localRole = identityState?.role ?: Role.USER
+
+    // UI View Filter ONLY - defaults to bound department if logged in as department, else ALL
+    val defaultFilter = remember(localDeptId) {
+        localDeptId?.let { viewModel.resolveDepartmentId(it) } ?: "ALL"
+    }
+    var selectedViewFilter by remember(defaultFilter) { mutableStateOf(defaultFilter) }
 
     // Department requests inbox filtered by UI display filter
     val departmentRequests = remember(messages, selectedViewFilter) {
         messages.filter { msg ->
             msg.isIncoming && (
-                selectedViewFilter == "ALL" ||
-                msg.departmentId.equals(selectedViewFilter, ignoreCase = true) ||
-                msg.receiverId.equals(selectedViewFilter, ignoreCase = true)
+                selectedViewFilter.equals("ALL", ignoreCase = true) ||
+                viewModel.areDepartmentsMatching(msg.departmentId, selectedViewFilter) ||
+                viewModel.areDepartmentsMatching(msg.receiverId, selectedViewFilter)
             )
         }.sortedByDescending { it.timestamp }
     }
@@ -91,7 +98,7 @@ fun ReceiverScreen(
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
-                    tint = Color.White
+                    tint = Color.Black
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -110,30 +117,77 @@ fun ReceiverScreen(
             }
         }
 
+        if (isSosActive) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color.Red.copy(alpha = 0.25f)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "🚨 EMERGENCY ALARM ACTIVE",
+                            color = Color.Red,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                        Text(
+                            text = "High priority SOS received",
+                            color = Color.White,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Button(
+                        onClick = { viewModel.cancelActiveSos() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "SILENCE",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Display Filter Section (Display only, does not alter device identity)
+        // Active Department Filter & Receiver Binding Section
         Text(
-            text = "View Filter (Display Only):",
+            text = "Active Department Binding (Tap to receive alerts):",
             fontSize = 11.sp,
-            color = Color.Gray
+            color = Color.LightGray
         )
         Spacer(modifier = Modifier.height(4.dp))
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
         ) {
-            listOf("ALL", "NDRF", "MEDICAL", "POLICE", "FIRE").forEach { dept ->
+            listOf("ALL", "NDRF", "MEDICAL", "POLICE", "FIRE", "RAILWAY", "CIVIL").forEach { dept ->
                 val isSelected = selectedViewFilter.equals(dept, ignoreCase = true)
                 Button(
                     onClick = {
                         selectedViewFilter = dept
+                        viewModel.setReceiverDepartment(dept)
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isSelected) PrimaryNeonGreen else DarkSurfaceVariant
                     ),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-                    modifier = Modifier.weight(1f)
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = dept,

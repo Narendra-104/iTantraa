@@ -13,6 +13,8 @@ class MessageRepository(
 ) {
     fun getAllMessages(): Flow<List<MessageEntity>> = messageDao.getAllMessages()
 
+    fun getEmergencyMessages(): Flow<List<MessageEntity>> = messageDao.getEmergencyMessages()
+
     fun getConversationMessages(conversationId: String): Flow<List<MessageEntity>> = messageDao.getConversationMessages(conversationId)
 
     suspend fun getMessageById(msgId: Long): MessageEntity? = messageDao.getMessageById(msgId)

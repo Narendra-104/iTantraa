@@ -31,6 +31,7 @@ class SosAlertManager(
     private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
 
     private var activeRingtone: android.media.Ringtone? = null
+    private val handledSosAlertMsgIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
 
     init {
         createEmergencyNotificationChannel()
@@ -41,8 +42,16 @@ class SosAlertManager(
             activeRingtone?.stop()
             activeRingtone = null
             vibrator?.cancel()
+            ttsEngine.stop()
+            notificationManager.cancel(NOTIFICATION_ID)
         } catch (ignored: Exception) {
         }
+    }
+
+    fun isAlertHandled(msgId: Long): Boolean = handledSosAlertMsgIds.contains(msgId)
+
+    fun resetHandledAlerts() {
+        handledSosAlertMsgIds.clear()
     }
 
     private fun createEmergencyNotificationChannel() {
@@ -69,17 +78,48 @@ class SosAlertManager(
     }
 
     fun triggerIncomingSosAlert(sosPacket: Packet, receiverLat: Double?, receiverLon: Double?) {
-        // 1. Override media / alarm volume to MAX for the alert
+        // Deduplicate retries or duplicate packets: sound triggers only once per SOS msgId
+        if (!handledSosAlertMsgIds.add(sosPacket.msgId)) {
+            return
+        }
+
+        // 1. Attempt to set alarm stream volume to max (isolated in try/catch to survive DND restriction)
         try {
             val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
             audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVol, 0)
-            val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            activeRingtone = RingtoneManager.getRingtone(context, alarmSound)
-            activeRingtone?.play()
-        } catch (ignored: Exception) {
+        } catch (_: Throwable) {
+            // DND or policy restriction on volume adjustment; proceed with ringtone playback
         }
 
-        // 2. Audio Focus request with USAGE_ALARM to not be interrupted
+        // 2. Play audible alarm ringtone with USAGE_ALARM
+        try {
+            activeRingtone?.stop()
+            val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+
+            if (alarmSound != null) {
+                activeRingtone = RingtoneManager.getRingtone(context, alarmSound)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    activeRingtone?.audioAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    activeRingtone?.streamType = AudioManager.STREAM_ALARM
+                }
+                activeRingtone?.play()
+            }
+        } catch (e: Throwable) {
+            // Fallback emergency tone generation
+            try {
+                val toneGen = android.media.ToneGenerator(AudioManager.STREAM_ALARM, 100)
+                toneGen.startTone(android.media.ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 2500)
+            } catch (_: Throwable) {}
+        }
+
+        // 3. Audio Focus request with USAGE_ALARM to not be interrupted
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                 .setAudioAttributes(
@@ -95,7 +135,7 @@ class SosAlertManager(
             audioManager.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
         }
 
-        // 3. Vibration pattern
+        // 4. Vibration pattern
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator?.vibrate(
                 VibrationEffect.createWaveform(
@@ -108,7 +148,7 @@ class SosAlertManager(
             vibrator?.vibrate(longArrayOf(0, 600, 200, 600, 200, 1000), -1)
         }
 
-        // 4. Calculate relative distance/bearing if coordinates are available
+        // 5. Calculate relative distance/bearing if coordinates are available
         val distanceText = if (sosPacket.hasLocation && receiverLat != null && receiverLon != null) {
             val dist = Haversine.distanceMeters(
                 receiverLat,
@@ -127,7 +167,7 @@ class SosAlertManager(
             " ($distStr $cardinal)"
         } else ""
 
-        // 5. Full-screen intent Notification
+        // 6. Full-screen intent Notification with Silence action
         val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("EXTRA_SOS_ALERT", true)
@@ -141,6 +181,17 @@ class SosAlertManager(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val silenceIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("EXTRA_SILENCE_SOS", true)
+        }
+        val silencePendingIntent = PendingIntent.getActivity(
+            context,
+            1003,
+            silenceIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("🚨 EMERGENCY SOS FROM ${sosPacket.senderId}$distanceText")
@@ -148,13 +199,18 @@ class SosAlertManager(
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setFullScreenIntent(pendingIntent, true)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "SILENCE ALARM",
+                silencePendingIntent
+            )
             .setAutoCancel(true)
             .setOngoing(false)
             .build()
 
         notificationManager.notify(NOTIFICATION_ID, notification)
 
-        // 6. Speak in sender's language offline
+        // 7. Speak in sender's language offline
         scope.launch(Dispatchers.Main) {
             val alertSpeech = "Emergency alert from ${sosPacket.senderId}. ${sosPacket.text}"
             ttsEngine.speak(alertSpeech, sosPacket.lang, isEmergency = true)

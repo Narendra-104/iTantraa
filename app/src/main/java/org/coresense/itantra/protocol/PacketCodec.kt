@@ -159,10 +159,7 @@ object PacketCodec {
                 when (fieldTag) {
                     TAG_MSG_ID -> msgId = readVarint64(stream)
                     TAG_SENDER_ID -> {
-                        val len = readVarint32(stream) ?: 0
-                        val buf = ByteArray(len)
-                        stream.read(buf)
-                        senderId = String(buf, Charsets.UTF_8)
+                        senderId = readBoundedString(stream) ?: ""
                     }
                     TAG_SEQ -> seq = readVarint32(stream) ?: 0
                     TAG_LANG -> {
@@ -174,10 +171,7 @@ object PacketCodec {
                         priority = PacketPriority.fromValue(pVal)
                     }
                     TAG_TEXT -> {
-                        val len = readVarint32(stream) ?: 0
-                        val buf = ByteArray(len)
-                        stream.read(buf)
-                        text = String(buf, Charsets.UTF_8)
+                        text = readBoundedString(stream) ?: ""
                     }
                     TAG_TIMESTAMP -> timestamp = readVarint64(stream)
                     TAG_LAT -> lat = decodeZigZag32(readVarint32(stream) ?: 0)
@@ -187,22 +181,13 @@ object PacketCodec {
                         type = PacketType.fromValue(tVal)
                     }
                     TAG_RECEIVER_ID -> {
-                        val len = readVarint32(stream) ?: 0
-                        val buf = ByteArray(len)
-                        stream.read(buf)
-                        receiverId = String(buf, Charsets.UTF_8)
+                        receiverId = readBoundedString(stream)
                     }
                     TAG_DEPARTMENT_ID -> {
-                        val len = readVarint32(stream) ?: 0
-                        val buf = ByteArray(len)
-                        stream.read(buf)
-                        departmentId = String(buf, Charsets.UTF_8)
+                        departmentId = readBoundedString(stream)
                     }
                     TAG_CONVERSATION_ID -> {
-                        val len = readVarint32(stream) ?: 0
-                        val buf = ByteArray(len)
-                        stream.read(buf)
-                        conversationId = String(buf, Charsets.UTF_8)
+                        conversationId = readBoundedString(stream)
                     }
                     TAG_ACCURACY -> {
                         val b = ByteArray(4)
@@ -229,6 +214,10 @@ object PacketCodec {
                 }
             }
 
+            // Coordinate range validation: [-90 deg, +90 deg] and [-180 deg, +180 deg]
+            val safeLat = if (lat != null && lat in -90_000_000..90_000_000) lat else null
+            val safeLon = if (lon != null && lon in -180_000_000..180_000_000) lon else null
+
             Result.success(
                 Packet(
                     msgId = msgId,
@@ -238,8 +227,8 @@ object PacketCodec {
                     priority = priority,
                     text = text,
                     timestamp = timestamp,
-                    latitudeMicrodegrees = lat,
-                    longitudeMicrodegrees = lon,
+                    latitudeMicrodegrees = safeLat,
+                    longitudeMicrodegrees = safeLon,
                     accuracyMeters = accuracyMeters,
                     type = type,
                     receiverId = receiverId,
@@ -314,5 +303,22 @@ object PacketCodec {
             }
             1 -> stream.skip(8) // Fixed 64
         }
+    }
+
+    private const val MAX_STRING_FIELD_BYTES = 65536
+
+    private fun readBoundedString(stream: InputStream): String? {
+        val len = readVarint32(stream) ?: return null
+        if (len < 0 || len > MAX_STRING_FIELD_BYTES) {
+            throw IllegalArgumentException("Malformed field length: $len bytes exceeds safety ceiling")
+        }
+        val buf = ByteArray(len)
+        var totalRead = 0
+        while (totalRead < len) {
+            val r = stream.read(buf, totalRead, len - totalRead)
+            if (r == -1) break
+            totalRead += r
+        }
+        return String(buf, 0, totalRead, Charsets.UTF_8)
     }
 }

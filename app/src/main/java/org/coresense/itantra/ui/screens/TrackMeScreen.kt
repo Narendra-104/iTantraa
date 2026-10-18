@@ -91,7 +91,7 @@ fun TrackMeScreen(viewModel: MainViewModel) {
                     text = "TRACK ME",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = Color.Black
                 )
                 Text(
                     text = "Real Offline GPS Telemetry & Mesh Visualization",
@@ -258,7 +258,7 @@ fun TrackMeScreen(viewModel: MainViewModel) {
                             if (isTracking) {
                                 viewModel.stopTrackMe()
                             } else {
-                                viewModel.startTrackMe(targetRecipient = selectedRecipient, intervalMs = 15_000L)
+                                viewModel.startTrackMe(targetRecipient = selectedRecipient, intervalMs = 1000L)
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -334,27 +334,22 @@ fun TrackMeScreen(viewModel: MainViewModel) {
                 .background(Color.Black, RoundedCornerShape(10.dp))
                 .border(1.dp, Color.DarkGray, RoundedCornerShape(10.dp))
         ) {
+            val isConnected = connectionState is ConnectionState.Connected
             if (selectedTab == 0) {
                 RadarVectorView(
                     myGps = gpsState as? GpsState.Fix,
-                    trackedPeers = trackedPeersMap.values.toList()
+                    trackedPeers = trackedPeersMap.values.toList(),
+                    isConnected = isConnected
                 )
             } else {
                 PeerDirectoryView(
                     myGps = gpsState as? GpsState.Fix,
                     trackedPeers = trackedPeersMap.values.toList(),
-                    timeFormat = timeFormat
+                    timeFormat = timeFormat,
+                    isConnected = isConnected
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "Offline Vector Radar • Distances computed via Haversine great-circle formula • No cloud map required",
-            fontSize = 10.sp,
-            color = Color.Gray,
-            textAlign = TextAlign.Center
-        )
     }
 }
 
@@ -366,7 +361,8 @@ fun TrackMeScreen(viewModel: MainViewModel) {
 @Composable
 fun RadarVectorView(
     myGps: GpsState.Fix?,
-    trackedPeers: List<TrackedPeer>
+    trackedPeers: List<TrackedPeer>,
+    isConnected: Boolean = true
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "radarSweep")
     val sweepAngle by infiniteTransition.animateFloat(
@@ -489,7 +485,20 @@ fun RadarVectorView(
                     val blipX = center.x + blipR * cos(thetaRad).toFloat()
                     val blipY = center.y + blipR * sin(thetaRad).toFloat()
 
-                    val blipColor = if (peer.isStale) Color(0xFFFF9800) else Color(0xFF00E5FF)
+                    val status = peer.getStatus(isConnected)
+                    val blipColor = Color(status.colorHex)
+
+                    // Draw accuracy boundary circle if reported
+                    peer.accuracyMeters?.let { accM ->
+                        val accRatio = (accM.toDouble() / maxDistanceMeters).coerceIn(0.02, 0.4)
+                        val accR = (radius * accRatio).toFloat()
+                        drawCircle(
+                            color = blipColor.copy(alpha = 0.2f),
+                            radius = accR.coerceAtLeast(10f),
+                            center = Offset(blipX, blipY),
+                            style = Stroke(width = 1.dp.toPx())
+                        )
+                    }
 
                     // Draw peer blip circle
                     drawCircle(
@@ -503,16 +512,17 @@ fun RadarVectorView(
                         center = Offset(blipX, blipY)
                     )
 
-                    // Label with Peer ID and distance
+                    // Label with Peer ID, status, and distance
                     val distLabel = if (dist >= 1000) String.format(Locale.US, "%.1fkm", dist / 1000.0) else "${dist.toInt()}m"
+                    val accLabel = peer.accuracyMeters?.let { " ±${it.toInt()}m" } ?: ""
                     drawContext.canvas.nativeCanvas.apply {
                         val paint = android.graphics.Paint().apply {
-                            color = if (peer.isStale) android.graphics.Color.YELLOW else android.graphics.Color.CYAN
+                            color = status.colorHex.toInt()
                             textSize = 24f
                             isFakeBoldText = true
                             isAntiAlias = true
                         }
-                        drawText("${peer.deviceId} ($distLabel)", blipX + 12f, blipY + 8f, paint)
+                        drawText("${peer.deviceId} • ${status.label} ($distLabel$accLabel)", blipX + 12f, blipY + 8f, paint)
                     }
                 }
             }
@@ -559,7 +569,8 @@ fun RadarVectorView(
 fun PeerDirectoryView(
     myGps: GpsState.Fix?,
     trackedPeers: List<TrackedPeer>,
-    timeFormat: SimpleDateFormat
+    timeFormat: SimpleDateFormat,
+    isConnected: Boolean = true
 ) {
     if (trackedPeers.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -592,13 +603,16 @@ fun PeerDirectoryView(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(trackedPeers, key = { it.deviceId }) { peer ->
+                val status = peer.getStatus(isConnected)
+                val statusColor = Color(status.colorHex)
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
                     shape = RoundedCornerShape(8.dp),
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp,
-                        if (peer.isStale) Color(0xFFFF9800) else PrimaryNeonGreen
+                        statusColor
                     )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -611,10 +625,7 @@ fun PeerDirectoryView(
                                 Box(
                                     modifier = Modifier
                                         .size(10.dp)
-                                        .background(
-                                            if (peer.isStale) Color(0xFFFF9800) else PrimaryNeonGreen,
-                                            CircleShape
-                                        )
+                                        .background(statusColor, CircleShape)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
@@ -625,12 +636,19 @@ fun PeerDirectoryView(
                                 )
                             }
 
-                            Text(
-                                text = if (peer.isStale) "STALE (>2m ago)" else "LIVE FIX",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (peer.isStale) Color(0xFFFF9800) else PrimaryNeonGreen
-                            )
+                            Surface(
+                                color = statusColor.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(6.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, statusColor)
+                            ) {
+                                Text(
+                                    text = status.label,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = statusColor
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(6.dp))
@@ -663,19 +681,31 @@ fun PeerDirectoryView(
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 peer.accuracyMeters?.let { acc ->
+                                    val accCategory = when {
+                                        acc <= 10f -> "High GPS"
+                                        acc <= 30f -> "Standard"
+                                        else -> "Reduced"
+                                    }
                                     Text(
-                                        text = "±${acc.toInt()}m",
+                                        text = "±${acc.toInt()}m ($accCategory)",
                                         fontSize = 11.sp,
-                                        color = Color.LightGray
+                                        color = if (acc > 50f) Color(0xFFFF9800) else Color.LightGray
                                     )
                                 }
                             }
                         }
 
                         Spacer(modifier = Modifier.height(4.dp))
+                        val fixAgeSeconds = ((System.currentTimeMillis() - peer.timestamp) / 1000).coerceAtLeast(0)
+                        val latencyMs = (peer.lastReceivedTime - peer.timestamp).coerceAtLeast(0)
                         Text(
-                            text = "Last received: ${timeFormat.format(Date(peer.lastReceivedTime))} (Timestamp: ${timeFormat.format(Date(peer.timestamp))})",
+                            text = "Fix Age: ${fixAgeSeconds}s • Latency: ${latencyMs}ms • Seq: #${peer.seq}",
                             fontSize = 11.sp,
+                            color = Color.LightGray
+                        )
+                        Text(
+                            text = "Last received: ${timeFormat.format(Date(peer.lastReceivedTime))} (Fix: ${timeFormat.format(Date(peer.timestamp))})",
+                            fontSize = 10.sp,
                             color = Color.Gray
                         )
                     }

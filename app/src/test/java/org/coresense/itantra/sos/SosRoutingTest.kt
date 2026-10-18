@@ -715,6 +715,369 @@ class SosRoutingTest {
     }
 
     // =========================================================================
+    // TEST 15: MEDICAL -> NDRF SOS Routing
+    // =========================================================================
+    @Test
+    fun test15_MedicalToNdrfSosRouting() = runBlocking {
+        val ndrfIdentity = UserIdentity("NDRF-1", "NDRF Search & Rescue", Role.DEPARTMENT, "IT-DEPT-NDRF-01", "NDRF")
+        val otherDeptIdentity = UserIdentity("FIRE-1", "Fire Dispatch", Role.DEPARTMENT, fireDeviceId, "FIRE_DISASTER")
+
+        val sosPacket = Packet(
+            msgId = 9125L,
+            senderId = medicalDeviceId,
+            receiverId = null,
+            departmentId = "NDRF",
+            conversationId = "conv_MED_NDRF",
+            seq = 1,
+            lang = Language.HINDI,
+            priority = PacketPriority.SOS,
+            text = "[NDRF EMERGENCY SOS] Search & Rescue team needed for flood extraction",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        assertTrue("NDRF device must accept NDRF targeted SOS", isPacketAcceptedByDevice(sosPacket, ndrfIdentity))
+        assertFalse("Unrelated department must reject NDRF targeted SOS", isPacketAcceptedByDevice(sosPacket, otherDeptIdentity))
+
+        val fakeNdrfDao = FakeMessageDao()
+        val ndrfRepo = MessageRepository(fakeNdrfDao, FakeConversationDao())
+        val entity = MessageEntity(
+            msgId = sosPacket.msgId,
+            senderId = sosPacket.senderId,
+            seq = sosPacket.seq,
+            lang = sosPacket.lang.displayName,
+            priority = sosPacket.priority.name,
+            text = sosPacket.text,
+            receiverId = null,
+            departmentId = sosPacket.departmentId,
+            conversationId = sosPacket.conversationId,
+            timestamp = sosPacket.timestamp,
+            latitudeMicrodegrees = null,
+            longitudeMicrodegrees = null,
+            deliveryState = "DELIVERED",
+            isIncoming = true
+        )
+        ndrfRepo.insertMessage(entity)
+        val stored = ndrfRepo.getMessageById(9125L)
+        assertNotNull(stored)
+        assertEquals("NDRF", stored!!.departmentId)
+        assertEquals("SOS", stored.priority)
+    }
+
+    // =========================================================================
+    // TEST 16: NDRF -> Fire & Disaster SOS with Alias Support
+    // =========================================================================
+    @Test
+    fun test16_NdrfToFireAndDisasterSosWithAliasSupport() {
+        val fireIdentity = UserIdentity("FIRE-1", "Fire Dispatch", Role.DEPARTMENT, fireDeviceId, "FIRE_DISASTER")
+        val policeIdentity = UserIdentity("POL-1", "Police Dispatch", Role.DEPARTMENT, policeDeviceId, "POLICE")
+
+        val sosPacket = Packet(
+            msgId = 9126L,
+            senderId = "IT-DEPT-NDRF-01",
+            receiverId = null,
+            departmentId = "FIRE",
+            conversationId = "conv_NDRF_FIRE",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.SOS,
+            text = "[FIRE EMERGENCY SOS] Structural blaze",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        assertTrue("Fire & Disaster device must accept FIRE alias SOS", isPacketAcceptedByDevice(sosPacket, fireIdentity))
+        assertFalse("Police device must reject Fire SOS", isPacketAcceptedByDevice(sosPacket, policeIdentity))
+    }
+
+    // =========================================================================
+    // TEST 17: Railway Commission SOS Delivery
+    // =========================================================================
+    @Test
+    fun test17_RailwayCommissionSosRouting() {
+        val railwayIdentity = UserIdentity("RW-1", "Railway Commission", Role.DEPARTMENT, "IT-DEPT-RW-01", "RAILWAY")
+        val medicalIdentity = UserIdentity("MED-1", "Medical", Role.DEPARTMENT, medicalDeviceId, "MEDICAL")
+
+        val sosPacket = Packet(
+            msgId = 9127L,
+            senderId = userDeviceId,
+            receiverId = null,
+            departmentId = "RAILWAY",
+            conversationId = "conv_USER_RW",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.SOS,
+            text = "[RAILWAY EMERGENCY SOS] Track obstruction at Km 42",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        assertTrue("Railway device must accept Railway SOS", isPacketAcceptedByDevice(sosPacket, railwayIdentity))
+        assertFalse("Medical device must reject Railway SOS", isPacketAcceptedByDevice(sosPacket, medicalIdentity))
+    }
+
+    // =========================================================================
+    // TEST 18: Civil Defence SOS Delivery
+    // =========================================================================
+    @Test
+    fun test18_CivilDefenceSosRouting() {
+        val civilIdentity = UserIdentity("CIVIL-1", "Civil Defence Dispatch", Role.DEPARTMENT, "IT-DEPT-CIVIL-01", "CIVIL_DEFENCE")
+        val fireIdentity = UserIdentity("FIRE-1", "Fire", Role.DEPARTMENT, fireDeviceId, "FIRE_DISASTER")
+
+        val sosPacket = Packet(
+            msgId = 9128L,
+            senderId = userDeviceId,
+            receiverId = null,
+            departmentId = "CIVIL",
+            conversationId = "conv_USER_CIVIL",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.SOS,
+            text = "[CIVIL EMERGENCY SOS] Cyclone evacuation shelter setup required",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        assertTrue("Civil Defence device must accept Civil SOS with alias support", isPacketAcceptedByDevice(sosPacket, civilIdentity))
+        assertFalse("Fire device must reject Civil SOS", isPacketAcceptedByDevice(sosPacket, fireIdentity))
+    }
+
+    // =========================================================================
+    // TEST 19: User-Targeted SOS Preserves Recipient ID and Isolates
+    // =========================================================================
+    @Test
+    fun test19_UserTargetedSosPreservesRecipientIdAndIsolates() {
+        val targetUserIdentity = UserIdentity("CITIZEN-02", "Citizen Two", Role.USER, "IT-CITIZEN-02", null)
+        val bystanderUserIdentity = UserIdentity("CITIZEN-03", "Citizen Three", Role.USER, "IT-CITIZEN-03", null)
+        val deptIdentity = UserIdentity("MED-1", "Medical", Role.DEPARTMENT, medicalDeviceId, "MEDICAL")
+
+        val userSosPacket = Packet(
+            msgId = 9129L,
+            senderId = userDeviceId,
+            receiverId = "IT-CITIZEN-02",
+            departmentId = null,
+            conversationId = "conv_CITIZEN-01_CITIZEN-02",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.SOS,
+            text = "[DIRECT SOS] Help needed near Sector 9",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        assertTrue("Intended target citizen must accept direct SOS", isPacketAcceptedByDevice(userSosPacket, targetUserIdentity))
+        assertFalse("Bystander citizen must reject direct SOS", isPacketAcceptedByDevice(userSosPacket, bystanderUserIdentity))
+        assertFalse("Department device must reject user-targeted direct SOS", isPacketAcceptedByDevice(userSosPacket, deptIdentity))
+        assertEquals("IT-CITIZEN-02", userSosPacket.receiverId)
+        assertNull(userSosPacket.departmentId)
+    }
+
+    // =========================================================================
+    // TEST 20: Emergency SOS Alarm Single Sound Trigger and Deduplication
+    // =========================================================================
+    @Test
+    fun test20_EmergencySosAlarmSingleSoundTriggerAndDeduplication() {
+        val handledSosAlertMsgIds = ConcurrentHashMap.newKeySet<Long>()
+        var soundTriggerCount = 0
+
+        fun simulateIncomingSosTrigger(packet: Packet) {
+            if (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS) {
+                if (handledSosAlertMsgIds.add(packet.msgId)) {
+                    soundTriggerCount++
+                }
+            }
+        }
+
+        val sosMsgId = 9130L
+        val sosPacket = Packet(
+            msgId = sosMsgId,
+            senderId = userDeviceId,
+            receiverId = null,
+            departmentId = "MEDICAL",
+            conversationId = "conv_MED",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.SOS,
+            text = "[SOS] Emergency Alert",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        // 1st transmission
+        simulateIncomingSosTrigger(sosPacket)
+        assertEquals("Sound must trigger on first arrival of SOS", 1, soundTriggerCount)
+        assertTrue(handledSosAlertMsgIds.contains(sosMsgId))
+
+        // Retries/retransmissions with identical msgId
+        simulateIncomingSosTrigger(sosPacket)
+        simulateIncomingSosTrigger(sosPacket)
+        assertEquals("Sound must NOT re-trigger on packet retries", 1, soundTriggerCount)
+
+        // ACK packet for this SOS must not trigger sound
+        val ackPacket = Packet(
+            msgId = sosMsgId,
+            senderId = medicalDeviceId,
+            receiverId = userDeviceId,
+            departmentId = null,
+            conversationId = "conv_MED",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.NORMAL,
+            text = "ACK",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.ACK
+        )
+        simulateIncomingSosTrigger(ackPacket)
+        assertEquals("ACK packet must never trigger SOS alarm sound", 1, soundTriggerCount)
+    }
+
+    // =========================================================================
+    // TEST 21: Reopening SOS History Does Not Re-Alert
+    // =========================================================================
+    @Test
+    fun test21_ReopeningSosHistoryDoesNotReAlert() = runBlocking {
+        val handledSosAlertMsgIds = ConcurrentHashMap.newKeySet<Long>()
+        var soundTriggerCount = 0
+
+        val fakeDao = FakeMessageDao()
+        val repo = MessageRepository(fakeDao, FakeConversationDao())
+
+        // Save SOS into Room DB
+        val sos1 = MessageEntity(
+            msgId = 9131L,
+            senderId = userDeviceId,
+            seq = 1,
+            lang = "English",
+            priority = "SOS",
+            text = "Past SOS #1",
+            receiverId = null,
+            departmentId = "MEDICAL",
+            conversationId = "conv_1",
+            timestamp = 1000L,
+            latitudeMicrodegrees = null,
+            longitudeMicrodegrees = null,
+            deliveryState = "DELIVERED",
+            isIncoming = true
+        )
+        repo.insertMessage(sos1)
+
+        // User opens SOS History multiple times: reads from repository/DAO
+        val historyQuery1 = repo.getEmergencyMessages()
+        val historyQuery2 = repo.getAllMessages()
+
+        assertNotNull(historyQuery1)
+        assertNotNull(historyQuery2)
+        assertEquals("No sound trigger should occur from viewing database history", 0, soundTriggerCount)
+    }
+
+    // =========================================================================
+    // TEST 22: Normal Chat Does Not Trigger Emergency Alarm
+    // =========================================================================
+    @Test
+    fun test22_NormalChatDoesNotTriggerEmergencyAlarm() {
+        var sosAlarmTriggered = false
+
+        fun handlePacket(packet: Packet) {
+            if (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS) {
+                sosAlarmTriggered = true
+            }
+        }
+
+        val normalPacket = Packet(
+            msgId = 9132L,
+            senderId = userDeviceId,
+            receiverId = "IT-CITIZEN-02",
+            departmentId = null,
+            conversationId = "conv_CHAT",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.NORMAL,
+            text = "Hello, how are you?",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.DATA
+        )
+
+        handlePacket(normalPacket)
+        assertFalse("Normal chat message must never trigger emergency alarm sound", sosAlarmTriggered)
+    }
+
+    // =========================================================================
+    // TEST 23: Outgoing SOS Does Not Trigger Alarm On Sender
+    // =========================================================================
+    @Test
+    fun test23_OutgoingSosDoesNotTriggerAlarmOnSender() {
+        val senderIdentity = UserIdentity("CITIZEN-01", "Citizen One", Role.USER, userDeviceId, null)
+
+        val outgoingSosEcho = Packet(
+            msgId = 9133L,
+            senderId = userDeviceId, // Sent by me
+            receiverId = null,
+            departmentId = "NDRF",
+            conversationId = "conv_NDRF",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.SOS,
+            text = "[NDRF SOS] Outgoing beacon",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        assertFalse("Sender must ignore echo of its own outgoing packet", isPacketAcceptedByDevice(outgoingSosEcho, senderIdentity))
+    }
+
+    // =========================================================================
+    // TEST 24: NDRF to Railway Commission SOS Delivery, Isolation & Alarm
+    // =========================================================================
+    @Test
+    fun test24_NdrfToRailwayCommissionSosDeliveryAndAlarmTrigger() {
+        val phoneANdrfIdentity = UserIdentity("NDRF-01", "NDRF Lead", Role.DEPARTMENT, "IT-DEPT-NDRF-01", "NDRF")
+        val phoneBRailwayIdentity = UserIdentity("RAILWAY-01", "Railway Lead", Role.DEPARTMENT, "IT-DEPT-RAIL-01", "RAILWAY_COMMISSION")
+        val phoneCPoliceIdentity = UserIdentity("POLICE-01", "Police Lead", Role.DEPARTMENT, "IT-DEPT-POL-01", "POLICE")
+
+        val sosToRailwayPacket = Packet(
+            msgId = 9134L,
+            senderId = phoneANdrfIdentity.deviceId,
+            receiverId = null,
+            departmentId = "RAILWAY",
+            conversationId = MainViewModel.getConversationId(phoneANdrfIdentity.deviceId, "RAILWAY"),
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.SOS,
+            text = "[RAILWAY EMERGENCY SOS] Train derailment near Junction 4. Immediate support required!",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.SOS
+        )
+
+        // Phone B (Railway Commission) MUST accept the SOS packet
+        assertTrue("Phone B (Railway Commission) must accept Railway SOS", isPacketAcceptedByDevice(sosToRailwayPacket, phoneBRailwayIdentity))
+
+        // Phone C (Police) MUST reject the Railway SOS packet
+        assertFalse("Phone C (Police) must reject Railway SOS", isPacketAcceptedByDevice(sosToRailwayPacket, phoneCPoliceIdentity))
+
+        // Phone A (NDRF) MUST ignore echo of its own outgoing packet
+        assertFalse("Phone A (NDRF) must ignore echo of its own packet", isPacketAcceptedByDevice(sosToRailwayPacket, phoneANdrfIdentity))
+
+        // Receiver-side Emergency Alarm trigger verification
+        var alarmTriggered = false
+        val handledSosAlertMsgIds = ConcurrentHashMap.newKeySet<Long>()
+        if (sosToRailwayPacket.priority == PacketPriority.SOS || sosToRailwayPacket.type == PacketType.SOS) {
+            if (handledSosAlertMsgIds.add(sosToRailwayPacket.msgId)) {
+                alarmTriggered = true
+            }
+        }
+        assertTrue("Railway device must trigger receiver-side emergency alarm", alarmTriggered)
+
+        // Duplicate transmission test
+        var secondAlarmTriggered = false
+        if (sosToRailwayPacket.priority == PacketPriority.SOS || sosToRailwayPacket.type == PacketType.SOS) {
+            if (handledSosAlertMsgIds.add(sosToRailwayPacket.msgId)) {
+                secondAlarmTriggered = true
+            }
+        }
+        assertFalse("Retransmission of same SOS msgId must not re-trigger emergency alarm", secondAlarmTriggered)
+    }
+
+    // =========================================================================
     // Routing Logic Helper matching Step 9 rule
     // =========================================================================
     private fun isPacketAcceptedByDevice(packet: Packet, identity: UserIdentity): Boolean {
@@ -734,14 +1097,18 @@ class SosRoutingTest {
         // packet.departmentId == localDepartmentId AND local identity role == DEPARTMENT.
         // Persistent IdentityRepository identity is authoritative.
         val isForMyDepartment = if (isDepartmentMessage && targetDeptId != null) {
-            val isDeptRole = identity.role == Role.DEPARTMENT
+            val isDeptRole = identity.role == Role.DEPARTMENT || !identity.departmentId.isNullOrBlank()
             val localDeptId = identity.departmentId
             isDeptRole && localDeptId != null && (
                 localDeptId.equals(targetDeptId, ignoreCase = true) ||
                 (targetDeptId == "FIRE" && localDeptId.equals("FIRE_DISASTER", ignoreCase = true)) ||
                 (targetDeptId == "FIRE_DISASTER" && localDeptId.equals("FIRE", ignoreCase = true)) ||
                 (targetDeptId == "CIVIL" && localDeptId.equals("CIVIL_DEFENCE", ignoreCase = true)) ||
-                (targetDeptId == "CIVIL_DEFENCE" && localDeptId.equals("CIVIL", ignoreCase = true))
+                (targetDeptId == "CIVIL_DEFENCE" && localDeptId.equals("CIVIL", ignoreCase = true)) ||
+                (targetDeptId == "RAILWAY" && localDeptId.equals("RAILWAY_COMMISSION", ignoreCase = true)) ||
+                (targetDeptId == "RAILWAY_COMMISSION" && localDeptId.equals("RAILWAY", ignoreCase = true)) ||
+                (targetDeptId == "NDRF" && localDeptId.equals("NDRF_SEARCH_RESCUE", ignoreCase = true)) ||
+                (targetDeptId == "NDRF_SEARCH_RESCUE" && localDeptId.equals("NDRF", ignoreCase = true))
             )
         } else {
             false

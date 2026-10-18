@@ -77,15 +77,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val userProfile: StateFlow<org.coresense.itantra.storage.UserProfileEntity?> = database.userProfileDao().getUserProfile()
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    fun saveUserProfile(profile: org.coresense.itantra.storage.UserProfileEntity) {
+    fun saveUserProfile(
+        profile: org.coresense.itantra.storage.UserProfileEntity,
+        role: org.coresense.itantra.identity.Role? = null,
+        departmentId: String? = null
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             database.userProfileDao().insertOrUpdateProfile(profile)
-            val currentRole = identityRepository.userIdentity.value?.role ?: org.coresense.itantra.identity.Role.USER
-            val currentDept = identityRepository.userIdentity.value?.departmentId
+            val effectiveRole = role ?: identityRepository.userIdentity.value?.role ?: org.coresense.itantra.identity.Role.USER
+            val effectiveDept = departmentId ?: identityRepository.userIdentity.value?.departmentId
             identityRepository.saveIdentity(
                 name = profile.name,
-                role = currentRole,
-                departmentId = currentDept
+                role = effectiveRole,
+                departmentId = effectiveDept
             )
             identityRepository.saveProfileDetails(
                 aadhar = profile.aadhar,
@@ -101,7 +105,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Settings State
     val callsign = MutableStateFlow("CORE-ALPHA")
-    val receiverDepartment = MutableStateFlow("GLOBAL") // GLOBAL, NDRF, POLICE, FIRE
+    val receiverDepartment = MutableStateFlow(
+        identityRepository.userIdentity.value?.departmentId ?: "GLOBAL"
+    ) // GLOBAL, ALL, NDRF, POLICE, FIRE, etc.
+
+    fun setReceiverDepartment(dept: String) {
+        val clean = dept.trim()
+        receiverDepartment.value = clean
+        val isAll = clean.equals("ALL", ignoreCase = true)
+        val isUser = clean.equals("GLOBAL", ignoreCase = true) || clean.equals("USER", ignoreCase = true) || clean.equals("None", ignoreCase = true)
+        val role = if (isUser) {
+            org.coresense.itantra.identity.Role.USER
+        } else {
+            org.coresense.itantra.identity.Role.DEPARTMENT
+        }
+        val resolved = if (isAll) "ALL" else if (isUser) null else resolveDepartmentId(clean)
+        identityRepository.saveIdentity(
+            name = callsign.value,
+            role = role,
+            departmentId = resolved
+        )
+    }
+
     val selectedLanguage = MutableStateFlow(
         run {
             val savedName = try {
@@ -299,6 +324,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Sync incoming packets and delivery updates from reliability engine
         observeReliabilityEngine()
+
+        // Keep receiverDepartment in sync with persistent identity
+        viewModelScope.launch {
+            identityRepository.userIdentity.collect { id ->
+                val dept = id?.departmentId
+                if (!dept.isNullOrBlank()) {
+                    receiverDepartment.value = dept
+                }
+            }
+        }
 
         // Update facilities when GPS state changes
         viewModelScope.launch {
@@ -1384,8 +1419,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // 2. Direct message check: specifically addressed to my deviceId or local IP
-        val isDirectForMe = isDirectRecipient(packet.receiverId, myDeviceId)
+        // 2. Direct message check: specifically addressed to my deviceId, local IP, Bluetooth ID, or Hotspot
+        val isHotspotMessage = packet.receiverId != null && (
+            packet.receiverId.equals("hotspot_broadcast", ignoreCase = true) ||
+            packet.receiverId.equals("hotspot", ignoreCase = true) ||
+            packet.receiverId.equals("255.255.255.255") ||
+            packet.receiverId.startsWith("192.168.") ||
+            packet.receiverId.startsWith("10.") ||
+            packet.receiverId.startsWith("172.")
+        )
+        val isBluetoothDirectMessage = (currentTransportType.value == TransportType.BLUETOOTH_RFCOMM) || run {
+            val btAdapter = try { android.bluetooth.BluetoothAdapter.getDefaultAdapter() } catch (_: Throwable) { null }
+            val myBtAddress = try { btAdapter?.address } catch (_: Throwable) { null }
+            val myBtName = try { btAdapter?.name } catch (_: Throwable) { null }
+            (myBtAddress != null && myBtAddress.equals(packet.receiverId, ignoreCase = true)) ||
+            (myBtName != null && myBtName.equals(packet.receiverId, ignoreCase = true))
+        }
+        val isConnectedPeerTarget = run {
+            val peer = (connectionState.value as? ConnectionState.Connected)?.peer
+            if (peer != null) {
+                peer.id.equals(packet.receiverId, ignoreCase = true) ||
+                peer.address.equals(packet.receiverId, ignoreCase = true) ||
+                peer.name.equals(packet.receiverId, ignoreCase = true)
+            } else false
+        }
+
+        val isDirectForMe = isDirectRecipient(packet.receiverId, myDeviceId) || isHotspotMessage || isBluetoothDirectMessage || isConnectedPeerTarget
 
         if (packet.text == "[TEST_CONNECTION]") {
             // Already ACKed by ReliabilityEngine, ignore for Chat/DB
@@ -1400,10 +1459,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // A department device accepts a department-addressed packet ONLY when:
         // packet.departmentId == localDepartmentId AND local identity role == DEPARTMENT.
         // Persistent IdentityRepository identity is authoritative. UI selectors NEVER affect routing.
+        val localDeptId = localIdentity?.departmentId ?: receiverDepartment.value.takeIf { !it.equals("GLOBAL", ignoreCase = true) && !it.equals("USER", ignoreCase = true) }
+        val isDeptRole = localIdentity?.role == Role.DEPARTMENT || !localDeptId.isNullOrBlank()
         val isForMyDepartment = if (isDepartmentMessage && targetDeptId != null) {
-            val localDeptId = localIdentity?.departmentId
-            val isDeptRole = localIdentity?.role == Role.DEPARTMENT || !localDeptId.isNullOrBlank()
-            isDeptRole && areDepartmentsMatching(localDeptId, targetDeptId)
+            if (localDeptId.equals("ALL", ignoreCase = true)) {
+                true
+            } else {
+                isDeptRole && areDepartmentsMatching(localDeptId, targetDeptId)
+            }
         } else {
             false
         }
@@ -1622,6 +1685,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else if (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS) {
                 isSosActive.value = true
                 activePipelineStage.value = "TTS"
+                targetNavigationTab.value = "SOS"
                 val gps = gpsState.value as? GpsState.Fix
                 sosAlertManager.triggerIncomingSosAlert(packet, gps?.latitude, gps?.longitude)
             } else if (isAutoTtsEnabled.value) {

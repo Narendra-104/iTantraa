@@ -747,6 +747,77 @@ class DepartmentReceiverReplyTest {
     }
 
     // =========================================================================
+    // TEST 14: NDRF_SEARCH_RESCUE matches NDRF canonical ID and isolates from MEDICAL
+    // =========================================================================
+    @Test
+    fun test14_NdrfSearchRescueMatchesNdrfAndIsolatesFromMedical() {
+        val ndrfIdentity = UserIdentity("OP-NDRF", "Operator NDRF", Role.DEPARTMENT, "IT-DEPT-NDRF", "NDRF_SEARCH_RESCUE")
+        val medicalIdentity = UserIdentity("OP-MED", "Operator MED", Role.DEPARTMENT, "IT-DEPT-MED", "MEDICAL")
+
+        val ndrfPacket = Packet(
+            msgId = 7150L,
+            senderId = userDeviceId,
+            receiverId = null,
+            departmentId = "NDRF",
+            conversationId = "conv_NDRF",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.NORMAL,
+            text = "Collapsed structure in Sector 3",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.DATA
+        )
+
+        assertTrue("NDRF device must accept packet targeted to NDRF", isPacketAcceptedByDevice(ndrfPacket, ndrfIdentity))
+        assertFalse("Medical device must reject packet targeted to NDRF", isPacketAcceptedByDevice(ndrfPacket, medicalIdentity))
+
+        val medicalPacket = Packet(
+            msgId = 7151L,
+            senderId = userDeviceId,
+            receiverId = null,
+            departmentId = "MEDICAL",
+            conversationId = "conv_MED",
+            seq = 2,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.NORMAL,
+            text = "Ambulance required immediately",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.DATA
+        )
+
+        assertTrue("Medical device must accept packet targeted to MEDICAL", isPacketAcceptedByDevice(medicalPacket, medicalIdentity))
+        assertFalse("NDRF device must reject packet targeted to MEDICAL", isPacketAcceptedByDevice(medicalPacket, ndrfIdentity))
+    }
+
+    // =========================================================================
+    // TEST 15: General broadcast message from department device reaches Unified ALL feed
+    // =========================================================================
+    @Test
+    fun test15_GeneralBroadcastFromDepartmentReachesAllDevices() {
+        val ndrfDeviceId = "IT-DEPT-NDRF-01"
+        val medIdentity = UserIdentity("OP-MED", "Operator MED", Role.DEPARTMENT, medicalDeviceId, "MEDICAL")
+        val citizenIdentity = UserIdentity("CIT1", "Citizen 1", Role.USER, userDeviceId, null)
+
+        // Department device sends a broadcast message to ALL / GLOBAL (targetDeptId is null)
+        val broadcastPacket = Packet(
+            msgId = 7160L,
+            senderId = ndrfDeviceId,
+            receiverId = null, // Global broadcast
+            departmentId = null, // Not a department-specific request
+            conversationId = "conv_global",
+            seq = 1,
+            lang = Language.ENGLISH,
+            priority = PacketPriority.NORMAL,
+            text = "Weather advisory: High wind alert in area",
+            timestamp = System.currentTimeMillis(),
+            type = PacketType.DATA
+        )
+
+        assertTrue("Medical device must accept general broadcast into Unified Feed", isPacketAcceptedByDevice(broadcastPacket, medIdentity))
+        assertTrue("Citizen device must accept general broadcast into Unified Feed", isPacketAcceptedByDevice(broadcastPacket, citizenIdentity))
+    }
+
+    // =========================================================================
     // Routing Logic Helper matching Step 8 rule
     // =========================================================================
     private fun isPacketAcceptedByDevice(packet: Packet, identity: UserIdentity): Boolean {
@@ -759,7 +830,7 @@ class DepartmentReceiverReplyTest {
         val isDirectForMe = packet.receiverId != null && packet.receiverId.equals(identity.deviceId, ignoreCase = true)
 
         // Department request check
-        val targetDeptId = packet.departmentId ?: resolveDept(packet.receiverId)
+        val targetDeptId = packet.departmentId?.let { resolveDept(it) ?: it } ?: resolveDept(packet.receiverId)
         val isDepartmentMessage = targetDeptId != null
 
         // Department device routing rule:
@@ -768,13 +839,7 @@ class DepartmentReceiverReplyTest {
         val isForMyDepartment = if (isDepartmentMessage && targetDeptId != null) {
             val isDeptRole = identity.role == Role.DEPARTMENT
             val localDeptId = identity.departmentId
-            isDeptRole && localDeptId != null && (
-                localDeptId.equals(targetDeptId, ignoreCase = true) ||
-                (targetDeptId == "FIRE" && localDeptId.equals("FIRE_DISASTER", ignoreCase = true)) ||
-                (targetDeptId == "FIRE_DISASTER" && localDeptId.equals("FIRE", ignoreCase = true)) ||
-                (targetDeptId == "CIVIL" && localDeptId.equals("CIVIL_DEFENCE", ignoreCase = true)) ||
-                (targetDeptId == "CIVIL_DEFENCE" && localDeptId.equals("CIVIL", ignoreCase = true))
-            )
+            isDeptRole && localDeptId != null && areDeptsMatching(localDeptId, targetDeptId)
         } else {
             false
         }
@@ -784,15 +849,26 @@ class DepartmentReceiverReplyTest {
         return isDirectForMe || isForMyDepartment || isGlobalBroadcast
     }
 
+    private fun areDeptsMatching(deptA: String?, deptB: String?): Boolean {
+        if (deptA.isNullOrBlank() || deptB.isNullOrBlank()) return false
+        val normA = resolveDept(deptA) ?: deptA.trim().uppercase()
+        val normB = resolveDept(deptB) ?: deptB.trim().uppercase()
+        return normA == normB
+    }
+
     private fun resolveDept(id: String?): String? {
         if (id == null) return null
+        val clean = id.trim()
         return when {
-            id.contains("NDRF", ignoreCase = true) -> "NDRF"
-            id.contains("Medic", ignoreCase = true) -> "MEDICAL"
-            id.contains("Police", ignoreCase = true) -> "POLICE"
-            id.contains("Fire", ignoreCase = true) -> "FIRE"
-            id.contains("Railway", ignoreCase = true) -> "RAILWAY"
-            id.contains("Civil", ignoreCase = true) -> "CIVIL"
+            clean.contains("NDRF", ignoreCase = true) -> "NDRF"
+            clean.contains("Medic", ignoreCase = true) -> "MEDICAL"
+            clean.contains("Police", ignoreCase = true) -> "POLICE"
+            clean.contains("Fire", ignoreCase = true) || clean.contains("Disaster", ignoreCase = true) -> "FIRE"
+            clean.contains("Railway", ignoreCase = true) -> "RAILWAY"
+            clean.contains("Civil", ignoreCase = true) -> "CIVIL"
+            Department.entries.any { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) } -> {
+                Department.entries.first { it.id.equals(clean, ignoreCase = true) || it.name.equals(clean, ignoreCase = true) }.id
+            }
             else -> null
         }
     }

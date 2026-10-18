@@ -7,7 +7,9 @@ enum class PacketType(val value: Int) {
     PING(3),
     PONG(4),
     SOS(5),
-    LOCATION(6);
+    LOCATION(6),
+    CALL_SIGNAL(7),
+    CALL_TRANSCRIPT(8);
 
     companion object {
         fun fromValue(value: Int): PacketType {

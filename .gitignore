@@ -18,3 +18,7 @@ local.properties
 app/src/main/assets/models/
 
 
+
+.vercel
+.env*
+scratch/

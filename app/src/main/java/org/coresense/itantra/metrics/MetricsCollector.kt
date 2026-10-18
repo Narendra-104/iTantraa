@@ -19,12 +19,12 @@ data class LiveDeviceMetrics(
     val batteryPercent: Int = 100,
     val batteryVoltageMv: Int = 0,
     val batteryTemperatureC: Float = 0f,
-    val lastUtteranceRtf: Float = 0f,
-    val lastLatencyMs: Long = 0L,
-    val lastPayloadBytes: Int = 0,
-    val lastPcmBytes: Int = 0,
-    val lastCompressionRatio: Float = 0f,
-    val equivalent64kbpsRatio: Float = 0f
+    val lastUtteranceRtf: Float? = null,
+    val lastLatencyMs: Long? = null,
+    val lastPayloadBytes: Int? = null,
+    val lastPcmBytes: Int? = null,
+    val lastCompressionRatio: Float? = null,
+    val equivalent64kbpsRatio: Float? = null
 )
 
 /**

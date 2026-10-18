@@ -42,4 +42,19 @@ class EnglishSpeechNormalizerTest {
         val normalized = EnglishSpeechNormalizer.normalize(input)
         assertEquals("critical situation need evacuation and oxygen", normalized)
     }
+
+    @Test
+    fun testConversationalEnglishPreservedWithoutDistortion() {
+        // Ensure common words like fine, food, good, hear are NOT converted to fire, flood, etc.
+        val input = "i am fine we have food and water good morning can you hear me"
+        val normalized = EnglishSpeechNormalizer.normalize(input)
+        assertEquals("i am fine we have food and water good morning can you hear me", normalized)
+    }
+
+    @Test
+    fun testSpeechListenDifferentNormalization() {
+        val input = "stt english is not respond properly that listen different an speech diffrent"
+        val normalized = EnglishSpeechNormalizer.normalize(input)
+        assertEquals("stt english is not respond properly that listen different an speech different", normalized)
+    }
 }

@@ -33,7 +33,7 @@ object LanguageDownloadConfig {
         Language.BENGALI to 85983232L,  // ~82.0 MB
         Language.TAMIL to 89128960L,    // ~85.0 MB
         Language.TELUGU to 88080384L,   // ~84.0 MB
-        Language.MARATHI to 82837504L,  // ~79.0 MB
+        Language.MARATHI to 123128563L, // ~117.4 MB bundled Vakyansh Marathi Wav2Vec2
         Language.GUJARATI to 80740352L, // ~77.0 MB
         Language.KANNADA to 87031808L,  // ~83.0 MB
         Language.MALAYALAM to 90177536L,// ~86.0 MB
@@ -44,7 +44,7 @@ object LanguageDownloadConfig {
     fun getDownloadInfo(language: Language): LanguageDownloadInfo {
         customConfigs[language]?.let { return it }
 
-        val isBundled = (language == Language.ENGLISH || language == Language.HINDI)
+        val isBundled = (language == Language.ENGLISH || language == Language.HINDI || language == Language.MARATHI)
         val estimatedSize = defaultSizeMap[language] ?: (80L * 1024L * 1024L)
 
         return LanguageDownloadInfo(
