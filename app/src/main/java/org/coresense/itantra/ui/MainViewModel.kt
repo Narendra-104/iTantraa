@@ -65,6 +65,8 @@ import org.coresense.itantra.vad.VadEvent
 import org.coresense.itantra.identity.Department
 import org.coresense.itantra.identity.Role
 import org.coresense.itantra.storage.ConversationEntity
+import org.coresense.itantra.data.model.AppNotification
+import org.coresense.itantra.data.model.NotificationCategory
 import java.util.UUID
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -247,6 +249,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val messages = messageRepository.getAllMessages()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Real-Time Notifications Flow
+    private val _notifications = MutableStateFlow<List<AppNotification>>(emptyList())
+    val notifications: StateFlow<List<AppNotification>> = _notifications.asStateFlow()
+
+    fun addNotification(notification: AppNotification) {
+        val current = _notifications.value.toMutableList()
+        // Deduplicate if identical id or same message within 2 seconds
+        if (current.any { it.id == notification.id || (it.message == notification.message && Math.abs(it.timestamp - notification.timestamp) < 2000L) }) {
+            return
+        }
+        current.add(0, notification)
+        if (current.size > 100) {
+            _notifications.value = current.take(100)
+        } else {
+            _notifications.value = current
+        }
+    }
+
+    fun removeNotification(id: String) {
+        _notifications.value = _notifications.value.filter { it.id != id }
+    }
+
+    fun clearNotifications() {
+        _notifications.value = emptyList()
+    }
+
     // SOS hold state
     val sosCountdownProgress = MutableStateFlow(0f)
     val isSosActive = MutableStateFlow(false)
@@ -360,6 +388,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+
+        // Real-Time Notifications initial population
+        viewModelScope.launch {
+            messageRepository.getAllMessages().collect { list ->
+                if (_notifications.value.isEmpty() && list.isNotEmpty()) {
+                    val initialNotifications = list.takeLast(30).reversed().map { msg ->
+                        val isSos = (msg.priority == "SOS" || msg.priority == "URGENT")
+                        val cat = if (isSos) NotificationCategory.SOS else NotificationCategory.CHAT
+                        val title = if (isSos) "🚨 SOS Alert: ${msg.senderId}" else "Message from ${msg.senderId}"
+                        AppNotification(
+                            id = msg.msgId.toString(),
+                            title = title,
+                            message = msg.text,
+                            category = cat,
+                            timestamp = msg.timestamp,
+                            senderId = msg.senderId,
+                            targetTab = if (isSos) "EMERGENCY_SOS" else "CHATS"
+                        )
+                    }
+                    _notifications.value = initialNotifications
+                }
+            }
+        }
     }
 
     private var enginePacketJob: Job? = null
@@ -405,7 +456,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeActiveTransport() {
         transportConnectionJob?.cancel()
         transportConnectionJob = viewModelScope.launch {
-            activeTransport.connectionState.collect { connectionState.value = it }
+            activeTransport.connectionState.collect { state ->
+                val prev = connectionState.value
+                connectionState.value = state
+                when (state) {
+                    is ConnectionState.Connected -> {
+                        addNotification(
+                            AppNotification(
+                                title = "Link Connected",
+                                message = "Connected to ${state.peer.name} (${activeTransport.transportType.displayName})",
+                                category = NotificationCategory.LINK,
+                                targetTab = "AUDIO"
+                            )
+                        )
+                    }
+                    is ConnectionState.Failed -> {
+                        addNotification(
+                            AppNotification(
+                                title = "Link Connection Failed",
+                                message = state.reason,
+                                category = NotificationCategory.LINK,
+                                targetTab = "AUDIO"
+                            )
+                        )
+                    }
+                    is ConnectionState.Disconnected -> {
+                        if (prev is ConnectionState.Connected) {
+                            addNotification(
+                                AppNotification(
+                                    title = "Link Disconnected",
+                                    message = "Disconnected from ${prev.peer.name}",
+                                    category = NotificationCategory.LINK,
+                                    targetTab = "AUDIO"
+                                )
+                            )
+                        }
+                    }
+                    else -> {}
+                }
+            }
         }
         transportPeersJob?.cancel()
         transportPeersJob = viewModelScope.launch {
@@ -415,6 +504,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     android.util.Log.d("WifiDirectTransport", "  -> MainViewModel peer: id=${p.id}, name=${p.name}, address=${p.address}")
                 }
                 discoveredPeers.value = peers
+            }
+        }
+    }
+
+    fun connectTransport(type: TransportType) {
+        if (currentTransportType.value != type) {
+            setTransport(type)
+        }
+        when (type) {
+            TransportType.LAN_UDP -> {
+                lanUdpTransport.connectDefaultHotspot()
+            }
+            TransportType.BLUETOOTH_RFCOMM -> {
+                bluetoothTransport.enableAutoConnect()
+                startDiscovery()
+            }
+            TransportType.WIFI_DIRECT -> {
+                wifiDirectTransport.enableAutoConnect()
+                startDiscovery()
             }
         }
     }
@@ -437,6 +545,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connectToPeer(peer: PeerDevice) {
+        if (currentTransportType.value != peer.transportType) {
+            setTransport(peer.transportType)
+        }
         val res = activeTransport.connect(peer)
         if (res.isFailure) {
             connectionState.value = ConnectionState.Failed(res.exceptionOrNull()?.message ?: "Unknown error")
@@ -1784,6 +1895,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val isSos = (packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS)
+        val cat = if (isSos) NotificationCategory.SOS else NotificationCategory.CHAT
+        val title = when {
+            isSos -> "🚨 EMERGENCY SOS FROM ${packet.senderId}"
+            !packet.departmentId.isNullOrBlank() -> "[${packet.departmentId}] from ${packet.senderId}"
+            !packet.receiverId.isNullOrBlank() && packet.receiverId != "GLOBAL" -> "Direct Message from ${packet.senderId}"
+            else -> "Broadcast from ${packet.senderId}"
+        }
+
+        // Content privacy: truncate to avoid leaking excessive private payload on lockscreen
+        val safeText = packet.text.trim().take(120)
+
+        // Real-time In-App Notification (Always updated regardless of Android POST_NOTIFICATIONS permission)
+        addNotification(
+            AppNotification(
+                id = packet.msgId.toString(),
+                title = title,
+                message = safeText,
+                category = cat,
+                timestamp = System.currentTimeMillis(),
+                senderId = packet.senderId,
+                targetTab = if (isSos) "EMERGENCY_SOS" else "CHATS"
+            )
+        )
+
         // Notification permission check on Android 13+ (API 33)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             if (androidx.core.content.ContextCompat.checkSelfPermission(
@@ -1825,16 +1961,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
 
-        val title = when {
-            packet.priority == PacketPriority.SOS || packet.type == PacketType.SOS -> "🚨 EMERGENCY SOS FROM ${packet.senderId}"
-            !packet.departmentId.isNullOrBlank() -> "[${packet.departmentId}] from ${packet.senderId}"
-            !packet.receiverId.isNullOrBlank() && packet.receiverId != "GLOBAL" -> "Direct Message from ${packet.senderId}"
-            else -> "Broadcast from ${packet.senderId}"
-        }
-
-        // Content privacy: truncate to avoid leaking excessive private payload on lockscreen
-        val safeText = packet.text.trim().take(120)
-
         val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
@@ -1853,6 +1979,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun showIncomingCallNotification(callerDisplayName: String, callId: String) {
+        addNotification(
+            AppNotification(
+                id = callId,
+                title = "Incoming Voice Call",
+                message = "Call from $callerDisplayName",
+                category = NotificationCategory.CALL,
+                timestamp = System.currentTimeMillis(),
+                senderId = callerDisplayName,
+                targetTab = "AUDIO"
+            )
+        )
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
         val channelId = "itantra_calls_channel"
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {

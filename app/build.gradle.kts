@@ -77,6 +77,13 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+
+    applicationVariants.all {
+        outputs.all {
+            val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            output?.outputFileName = "iTantra-v29.apk"
+        }
+    }
 }
 
 dependencies {

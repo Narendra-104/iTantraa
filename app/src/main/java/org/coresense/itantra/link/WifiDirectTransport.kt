@@ -73,6 +73,16 @@ class WifiDirectTransport(
 
     private var receiverJob: Job? = null
     private var isReceiverRegistered = false
+    private var isAutoConnectEnabled = false
+
+    fun enableAutoConnect() {
+        isAutoConnectEnabled = true
+        val peers = _discoveredPeers.value
+        if (peers.isNotEmpty() && _connectionState.value !is ConnectionState.Connected && _connectionState.value !is ConnectionState.Connecting) {
+            isAutoConnectEnabled = false
+            connect(peers.first())
+        }
+    }
 
     init {
         ensureChannel()
@@ -153,6 +163,11 @@ class WifiDirectTransport(
         }
         _discoveredPeers.value = mapped
         Log.i(TAG, "Delivered ${mapped.size} peer(s) to discoveredPeers StateFlow for UI")
+        if (isAutoConnectEnabled && mapped.isNotEmpty() && _connectionState.value !is ConnectionState.Connected && _connectionState.value !is ConnectionState.Connecting) {
+            isAutoConnectEnabled = false
+            Log.i(TAG, "Auto-connecting to first discovered Wi-Fi Direct peer: ${mapped.first().name} (${mapped.first().address})")
+            connect(mapped.first())
+        }
     }
 
     override fun onConnectionInfoAvailable(info: WifiP2pInfo?) {

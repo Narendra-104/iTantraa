@@ -22,23 +22,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.coresense.itantra.data.model.AppNotification
+import org.coresense.itantra.data.model.NotificationCategory
 import androidx.core.content.ContextCompat
 import org.coresense.itantra.ui.MainViewModel
 import org.coresense.itantra.ui.components.OfflineBanner
 import org.coresense.itantra.ui.components.PermissionRationaleDialog
 import org.coresense.itantra.ui.screens.*
 import org.coresense.itantra.ui.theme.DarkSurface
+import org.coresense.itantra.ui.theme.DarkSurfaceVariant
 import org.coresense.itantra.ui.theme.ITantraTheme
 import org.coresense.itantra.ui.theme.PrimaryNeonGreen
 
@@ -238,6 +238,7 @@ fun MainAppScaffold(
     }
 
     val sosHistoryMessages by viewModel.sosHistory.collectAsState()
+    val notificationsList by viewModel.notifications.collectAsState()
     val selectedLang by viewModel.selectedLanguage.collectAsState()
     val strings = remember(selectedLang) { org.coresense.itantra.ui.i18n.AppLocalization.getStrings(selectedLang) }
 
@@ -304,10 +305,185 @@ fun MainAppScaffold(
         if (showNotifications) {
             AlertDialog(
                 onDismissRequest = { showNotifications = false },
-                title = { Text("Notifications") },
-                text = { Text("All systems nominal. No new notifications.") },
+                title = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Notifications (${notificationsList.size})",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            fontSize = 18.sp
+                        )
+                        if (notificationsList.isNotEmpty()) {
+                            TextButton(
+                                onClick = { viewModel.clearNotifications() },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "Clear All",
+                                    color = Color(0xFFFF5252),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                },
+                text = {
+                    if (notificationsList.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.NotificationsNone,
+                                    contentDescription = null,
+                                    tint = Color.Gray,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "No new notifications",
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = "Real-time alerts, messages, and mesh link events will appear here.",
+                                    color = Color.LightGray,
+                                    fontSize = 12.sp,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 420.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            notificationsList.forEach { item ->
+                                val (badgeBg, badgeText, badgeIcon) = when (item.category) {
+                                    NotificationCategory.SOS -> Triple(Color(0xFFD32F2F), "SOS", Icons.Default.Warning)
+                                    NotificationCategory.CHAT -> Triple(PrimaryNeonGreen.copy(alpha = 0.25f), "CHAT", Icons.Default.Chat)
+                                    NotificationCategory.LINK -> Triple(Color(0xFF0288D1), "LINK", Icons.Default.Wifi)
+                                    NotificationCategory.CALL -> Triple(Color(0xFFF57C00), "CALL", Icons.Default.Phone)
+                                    NotificationCategory.SYSTEM -> Triple(Color.DarkGray, "SYSTEM", Icons.Default.Info)
+                                }
+                                val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(item.timestamp))
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (item.targetTab != null) {
+                                                when (item.targetTab) {
+                                                    "CHATS" -> currentTab = NavigationTab.CHATS
+                                                    "SOS", "EMERGENCY_SOS" -> currentTab = NavigationTab.EMERGENCY_SOS
+                                                    "AUDIO" -> currentTab = NavigationTab.AUDIO
+                                                    "TRACK_ME" -> currentTab = NavigationTab.TRACK_ME
+                                                    "DIAL" -> currentTab = NavigationTab.DIAL
+                                                }
+                                                inSettingsScreen = false
+                                                inDemoScreen = false
+                                                inTtsScreen = false
+                                                inReceiverScreen = false
+                                                showNotifications = false
+                                            }
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalAlignment = Alignment.Top
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .background(badgeBg, RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = badgeIcon,
+                                                    contentDescription = null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(12.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = badgeText,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = item.title,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = Color.White,
+                                                    maxLines = 1,
+                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                )
+                                                Text(
+                                                    text = timeStr,
+                                                    fontSize = 10.sp,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = item.message,
+                                                fontSize = 12.sp,
+                                                color = Color(0xFFE0E0E0),
+                                                maxLines = 3,
+                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { viewModel.removeNotification(item.id) },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Dismiss",
+                                                tint = Color.Gray,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
                 confirmButton = {
-                    TextButton(onClick = { showNotifications = false }) { Text("Close", color = PrimaryNeonGreen) }
+                    TextButton(onClick = { showNotifications = false }) {
+                        Text("Close", color = PrimaryNeonGreen, fontWeight = FontWeight.Bold)
+                    }
                 },
                 containerColor = DarkSurface,
                 titleContentColor = Color.White,
@@ -388,7 +564,29 @@ fun MainAppScaffold(
                                         }
                                     )
                                     DropdownMenuItem(
-                                        text = { Text(strings.notificationsMenu) },
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(strings.notificationsMenu)
+                                                if (notificationsList.isNotEmpty()) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        color = PrimaryNeonGreen
+                                                    ) {
+                                                        Text(
+                                                            text = "${notificationsList.size}",
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.Black,
+                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        },
                                         onClick = { 
                                             showProfileMenu = false 
                                             showNotifications = true

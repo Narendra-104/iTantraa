@@ -209,50 +209,158 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(6.dp))
 
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TransportType.entries.forEach { type ->
                     val isSelected = (activeTransport == type)
+                    val isConnected = isSelected && (connectionState is org.coresense.itantra.link.ConnectionState.Connected)
+                    val isConnecting = isSelected && (connectionState is org.coresense.itantra.link.ConnectionState.Connecting || connectionState is org.coresense.itantra.link.ConnectionState.Discovering)
+
+                    val cardBorder = when {
+                        isConnected -> androidx.compose.foundation.BorderStroke(1.5.dp, PrimaryNeonGreen)
+                        isSelected -> androidx.compose.foundation.BorderStroke(1.dp, PrimaryNeonGreen.copy(alpha = 0.6f))
+                        else -> null
+                    }
+                    val containerBg = when {
+                        isConnected -> PrimaryNeonGreen.copy(alpha = 0.18f)
+                        isSelected -> PrimaryNeonGreen.copy(alpha = 0.08f)
+                        else -> DarkSurface
+                    }
+
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) PrimaryNeonGreen.copy(alpha = 0.15f) else DarkSurface,
+                            containerColor = containerBg,
                             contentColor = Color.White
                         ),
-                        shape = RoundedCornerShape(8.dp),
-                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, PrimaryNeonGreen.copy(alpha = 0.6f)) else null,
-                        onClick = { viewModel.setTransport(type) }
+                        shape = RoundedCornerShape(10.dp),
+                        border = cardBorder,
+                        onClick = { viewModel.connectTransport(type) }
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = type.displayName,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = if (isSelected) PrimaryNeonGreen else Color.White
-                                )
-                                val desc = when (type) {
-                                    TransportType.WIFI_DIRECT -> "High throughput, 100m range, automatic P2P group"
-                                    TransportType.BLUETOOTH_RFCOMM -> "Low power SPP RFCOMM socket, reliable 10-30m link"
-                                    TransportType.LAN_UDP -> "Ad-hoc Hotspot UDP multicast without internet"
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val transportIcon = when (type) {
+                                    TransportType.WIFI_DIRECT -> Icons.Default.Wifi
+                                    TransportType.BLUETOOTH_RFCOMM -> Icons.Default.Bluetooth
+                                    TransportType.LAN_UDP -> Icons.Default.Share
                                 }
-                                Text(
-                                    text = desc,
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFB0B0B0)
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .background(
+                                            if (isConnected) PrimaryNeonGreen.copy(alpha = 0.25f) else DarkSurfaceVariant,
+                                            RoundedCornerShape(8.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = transportIcon,
+                                        contentDescription = null,
+                                        tint = if (isConnected || isSelected) PrimaryNeonGreen else Color.LightGray,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = type.displayName,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = if (isConnected || isSelected) PrimaryNeonGreen else Color.White
+                                    )
+                                    val desc = when (type) {
+                                        TransportType.WIFI_DIRECT -> "High throughput, auto P2P connect"
+                                        TransportType.BLUETOOTH_RFCOMM -> "Low power SPP RFCOMM, auto-pair"
+                                        TransportType.LAN_UDP -> "Ad-hoc Hotspot UDP, 1-click mesh"
+                                    }
+                                    Text(
+                                        text = desc,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFB0B0B0)
+                                    )
+                                }
                             }
-                            RadioButton(
-                                selected = isSelected,
-                                onClick = { viewModel.setTransport(type) },
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = PrimaryNeonGreen,
-                                    unselectedColor = Color(0xFFB0B0B0)
-                                )
-                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            // 1-Click Connect Button
+                            when {
+                                isConnected -> {
+                                    Button(
+                                        onClick = { viewModel.disconnectPeer() },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF1B5E20),
+                                            contentColor = Color.White
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = PrimaryNeonGreen,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "CONNECTED",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PrimaryNeonGreen
+                                        )
+                                    }
+                                }
+                                isConnecting -> {
+                                    Button(
+                                        onClick = { viewModel.stopDiscovery() },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFFE65100),
+                                            contentColor = Color.White
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(12.dp),
+                                            color = Color.White,
+                                            strokeWidth = 2.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "CONNECTING...",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    Button(
+                                        onClick = { viewModel.connectTransport(type) },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = PrimaryNeonGreen,
+                                            contentColor = Color.Black
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "CONNECT",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.Black
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

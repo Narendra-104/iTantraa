@@ -99,6 +99,21 @@ class LanUdpTransport(
         }
     }
 
+    fun connectDefaultHotspot(): Result<Unit> {
+        val defaultHotspotPeer = PeerDevice(
+            id = "hotspot_broadcast",
+            name = "Local Hotspot Broadcast",
+            address = "255.255.255.255",
+            transportType = TransportType.LAN_UDP
+        )
+        val current = _discoveredPeers.value.toMutableList()
+        if (current.none { it.id == defaultHotspotPeer.id }) {
+            current.add(0, defaultHotspotPeer)
+            _discoveredPeers.value = current
+        }
+        return connect(defaultHotspotPeer)
+    }
+
     override fun connect(peer: PeerDevice): Result<Unit> {
         targetPeer = peer
         val ok = ensureSocket()

@@ -59,6 +59,16 @@ class BluetoothTransport(
     private var serverJob: Job? = null
     private var receiverJob: Job? = null
     private var isReceiverRegistered = false
+    private var isAutoConnectEnabled = false
+
+    fun enableAutoConnect() {
+        isAutoConnectEnabled = true
+        val peers = _discoveredPeers.value
+        if (peers.isNotEmpty() && _connectionState.value !is ConnectionState.Connected && _connectionState.value !is ConnectionState.Connecting) {
+            isAutoConnectEnabled = false
+            connect(peers.first())
+        }
+    }
 
     private val bluetoothReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
@@ -84,6 +94,10 @@ class BluetoothTransport(
                         )
                         peerMap[it.address] = peer
                         _discoveredPeers.value = peerMap.values.toList()
+                        if (isAutoConnectEnabled && _connectionState.value !is ConnectionState.Connected && _connectionState.value !is ConnectionState.Connecting) {
+                            isAutoConnectEnabled = false
+                            connect(peer)
+                        }
                     }
                 }
                 BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
@@ -163,6 +177,10 @@ class BluetoothTransport(
                 peerMap[dev.address] = peer
             }
             _discoveredPeers.value = peerMap.values.toList()
+            if (isAutoConnectEnabled && peerMap.isNotEmpty() && _connectionState.value !is ConnectionState.Connected && _connectionState.value !is ConnectionState.Connecting) {
+                isAutoConnectEnabled = false
+                connect(peerMap.values.first())
+            }
 
             if (!isReceiverRegistered) {
                 val filter = IntentFilter().apply {
