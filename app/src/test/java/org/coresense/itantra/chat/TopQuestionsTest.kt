@@ -2,12 +2,12 @@ package org.coresense.itantra.chat
 
 import kotlinx.coroutines.*
 import org.coresense.itantra.data.repository.MessageRepository
-import org.coresense.itantra.identity.Role
-import org.coresense.itantra.identity.UserIdentity
-import org.coresense.itantra.protocol.*
+import org.coresense.itantra.core.identity.Role
+import org.coresense.itantra.core.identity.UserIdentity
+import org.coresense.itantra.core.protocol.*
 import org.coresense.itantra.sos.FakeConversationDao
 import org.coresense.itantra.sos.FakeMessageDao
-import org.coresense.itantra.storage.MessageEntity
+import org.coresense.itantra.data.database.MessageEntity
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before

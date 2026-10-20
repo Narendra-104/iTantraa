@@ -33,14 +33,14 @@ import androidx.compose.ui.unit.sp
 import org.coresense.itantra.data.model.AppNotification
 import org.coresense.itantra.data.model.NotificationCategory
 import androidx.core.content.ContextCompat
-import org.coresense.itantra.ui.MainViewModel
-import org.coresense.itantra.ui.components.OfflineBanner
-import org.coresense.itantra.ui.components.PermissionRationaleDialog
-import org.coresense.itantra.ui.screens.*
-import org.coresense.itantra.ui.theme.DarkSurface
-import org.coresense.itantra.ui.theme.DarkSurfaceVariant
-import org.coresense.itantra.ui.theme.ITantraTheme
-import org.coresense.itantra.ui.theme.PrimaryNeonGreen
+import org.coresense.itantra.frontend.viewmodel.MainViewModel
+import org.coresense.itantra.frontend.components.OfflineBanner
+import org.coresense.itantra.frontend.components.PermissionRationaleDialog
+import org.coresense.itantra.frontend.screens.*
+import org.coresense.itantra.frontend.theme.DarkSurface
+import org.coresense.itantra.frontend.theme.DarkSurfaceVariant
+import org.coresense.itantra.frontend.theme.ITantraTheme
+import org.coresense.itantra.frontend.theme.PrimaryNeonGreen
 
 enum class AppState {
     SPLASH,
@@ -240,7 +240,7 @@ fun MainAppScaffold(
     val sosHistoryMessages by viewModel.sosHistory.collectAsState()
     val notificationsList by viewModel.notifications.collectAsState()
     val selectedLang by viewModel.selectedLanguage.collectAsState()
-    val strings = remember(selectedLang) { org.coresense.itantra.ui.i18n.AppLocalization.getStrings(selectedLang) }
+    val strings = remember(selectedLang) { org.coresense.itantra.frontend.i18n.AppLocalization.getStrings(selectedLang) }
 
     if (inManageLanguagesScreen) {
         ManageLanguagesScreen(
@@ -696,7 +696,7 @@ fun MainAppScaffold(
                 val callSessionState by viewModel.callSessionState.collectAsState()
                 val incomingCallFrom by viewModel.incomingCallFrom.collectAsState()
 
-                if (callSessionState == org.coresense.itantra.ui.CallSessionState.INCOMING_CALL && currentTab != NavigationTab.DIAL) {
+                if (callSessionState == org.coresense.itantra.frontend.viewmodel.CallSessionState.INCOMING_CALL && currentTab != NavigationTab.DIAL) {
                     AlertDialog(
                         onDismissRequest = { /* stay on screen */ },
                         title = {
@@ -738,7 +738,7 @@ fun MainAppScaffold(
                                 Text("DECLINE")
                             }
                         },
-                        containerColor = org.coresense.itantra.ui.theme.DarkSurfaceVariant
+                        containerColor = org.coresense.itantra.frontend.theme.DarkSurfaceVariant
                     )
                 }
             }
@@ -933,7 +933,7 @@ fun MyProfileDialog(
                 Button(
                     onClick = {
                         val currentUserId = userProfile?.userId ?: identity?.userId ?: viewModel.identityRepository.getDeviceId()
-                        val updated = org.coresense.itantra.storage.UserProfileEntity(
+                        val updated = org.coresense.itantra.data.database.UserProfileEntity(
                             userId = currentUserId,
                             name = editName.ifBlank { "User" },
                             aadhar = editAadhar,

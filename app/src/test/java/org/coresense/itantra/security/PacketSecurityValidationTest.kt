@@ -1,6 +1,6 @@
 package org.coresense.itantra.security
 
-import org.coresense.itantra.protocol.*
+import org.coresense.itantra.core.protocol.*
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.ByteArrayOutputStream

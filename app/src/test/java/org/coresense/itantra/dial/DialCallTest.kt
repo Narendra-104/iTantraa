@@ -1,9 +1,9 @@
 package org.coresense.itantra.dial
 
 import kotlinx.coroutines.flow.MutableStateFlow
-import org.coresense.itantra.protocol.*
-import org.coresense.itantra.stt.EnglishSpeechNormalizer
-import org.coresense.itantra.ui.CallSessionState
+import org.coresense.itantra.core.protocol.*
+import org.coresense.itantra.backend.speech.EnglishSpeechNormalizer
+import org.coresense.itantra.frontend.viewmodel.CallSessionState
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.UUID

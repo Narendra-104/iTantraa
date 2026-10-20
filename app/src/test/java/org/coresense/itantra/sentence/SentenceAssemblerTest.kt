@@ -1,5 +1,6 @@
 package org.coresense.itantra.sentence
 
+import org.coresense.itantra.backend.speech.SentenceAssembler
 import org.junit.Assert.*
 import org.junit.Test
 

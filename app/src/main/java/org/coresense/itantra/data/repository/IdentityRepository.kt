@@ -5,9 +5,9 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.coresense.itantra.identity.Department
-import org.coresense.itantra.identity.Role
-import org.coresense.itantra.identity.UserIdentity
+import org.coresense.itantra.core.identity.Department
+import org.coresense.itantra.core.identity.Role
+import org.coresense.itantra.core.identity.UserIdentity
 import java.util.UUID
 
 class IdentityRepository(context: Context) {

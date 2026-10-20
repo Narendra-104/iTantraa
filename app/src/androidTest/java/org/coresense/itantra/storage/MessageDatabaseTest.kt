@@ -7,6 +7,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.coresense.itantra.data.repository.MessageRepository
+import org.coresense.itantra.data.database.AppDatabase
+import org.coresense.itantra.data.database.MessageDao
+import org.coresense.itantra.data.database.ConversationDao
+import org.coresense.itantra.data.database.MessageEntity
+import org.coresense.itantra.data.database.ConversationEntity
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before

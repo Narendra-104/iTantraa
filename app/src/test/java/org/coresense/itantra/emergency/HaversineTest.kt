@@ -1,5 +1,6 @@
 package org.coresense.itantra.emergency
 
+import org.coresense.itantra.backend.emergency.Haversine
 import org.junit.Assert.*
 import org.junit.Test
 

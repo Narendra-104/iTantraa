@@ -1,9 +1,9 @@
 package org.coresense.itantra.notifications
 
-import org.coresense.itantra.protocol.Language
-import org.coresense.itantra.protocol.Packet
-import org.coresense.itantra.protocol.PacketPriority
-import org.coresense.itantra.protocol.PacketType
+import org.coresense.itantra.core.protocol.Language
+import org.coresense.itantra.core.protocol.Packet
+import org.coresense.itantra.core.protocol.PacketPriority
+import org.coresense.itantra.core.protocol.PacketType
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.ConcurrentHashMap

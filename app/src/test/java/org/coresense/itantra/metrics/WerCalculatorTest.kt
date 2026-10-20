@@ -1,5 +1,6 @@
 package org.coresense.itantra.metrics
 
+import org.coresense.itantra.core.metrics.WerCalculator
 import org.junit.Assert.*
 import org.junit.Test
 

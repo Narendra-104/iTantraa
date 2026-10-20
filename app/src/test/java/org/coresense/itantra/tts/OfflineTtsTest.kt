@@ -2,7 +2,8 @@ package org.coresense.itantra.tts
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
-import org.coresense.itantra.protocol.*
+import org.coresense.itantra.core.protocol.*
+import org.coresense.itantra.backend.speech.*
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -357,11 +358,11 @@ class OfflineTtsTest {
 
     @Test
     fun testAllElevenLanguagesSamplePhrasesPresent() {
-        val sampleLanguages = org.coresense.itantra.ui.screens.ttsSamplePhrases.map { it.language }.toSet()
+        val sampleLanguages = org.coresense.itantra.frontend.screens.ttsSamplePhrases.map { it.language }.toSet()
         for (lang in Language.entries) {
             assertTrue("Sample phrases must contain an entry for ${lang.displayName}", sampleLanguages.contains(lang))
         }
-        assertEquals(11, org.coresense.itantra.ui.screens.ttsSamplePhrases.size)
+        assertEquals(11, org.coresense.itantra.frontend.screens.ttsSamplePhrases.size)
     }
 }
 

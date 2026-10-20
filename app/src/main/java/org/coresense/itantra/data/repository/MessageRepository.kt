@@ -1,11 +1,11 @@
 package org.coresense.itantra.data.repository
 
 import kotlinx.coroutines.flow.Flow
-import org.coresense.itantra.storage.MessageDao
-import org.coresense.itantra.storage.MessageEntity
+import org.coresense.itantra.data.database.MessageDao
+import org.coresense.itantra.data.database.MessageEntity
 
-import org.coresense.itantra.storage.ConversationDao
-import org.coresense.itantra.storage.ConversationEntity
+import org.coresense.itantra.data.database.ConversationDao
+import org.coresense.itantra.data.database.ConversationEntity
 
 class MessageRepository(
     private val messageDao: MessageDao,

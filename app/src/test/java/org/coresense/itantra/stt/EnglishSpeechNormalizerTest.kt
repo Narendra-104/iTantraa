@@ -1,5 +1,6 @@
 package org.coresense.itantra.stt
 
+import org.coresense.itantra.backend.speech.EnglishSpeechNormalizer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

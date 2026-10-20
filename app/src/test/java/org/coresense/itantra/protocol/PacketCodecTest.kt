@@ -1,5 +1,6 @@
 package org.coresense.itantra.protocol
 
+import org.coresense.itantra.core.protocol.*
 import org.junit.Assert.*
 import org.junit.Test
 

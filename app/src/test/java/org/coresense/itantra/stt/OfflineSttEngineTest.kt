@@ -1,7 +1,8 @@
 package org.coresense.itantra.stt
 
 import kotlinx.coroutines.runBlocking
-import org.coresense.itantra.protocol.Language
+import org.coresense.itantra.core.protocol.Language
+import org.coresense.itantra.backend.speech.*
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before

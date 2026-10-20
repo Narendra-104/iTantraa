@@ -1,7 +1,7 @@
 package org.coresense.itantra
 
 import android.app.Application
-import org.coresense.itantra.storage.AppDatabase
+import org.coresense.itantra.data.database.AppDatabase
 
 class ITantraApp : Application() {
 

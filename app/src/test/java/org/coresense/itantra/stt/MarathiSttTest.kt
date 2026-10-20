@@ -1,12 +1,14 @@
 package org.coresense.itantra.stt
 
 import kotlinx.coroutines.runBlocking
-import org.coresense.itantra.protocol.Language
-import org.coresense.itantra.protocol.Packet
-import org.coresense.itantra.protocol.PacketCodec
-import org.coresense.itantra.protocol.PacketPriority
-import org.coresense.itantra.protocol.PacketType
-import org.coresense.itantra.storage.MessageEntity
+import org.coresense.itantra.core.protocol.Language
+import org.coresense.itantra.core.protocol.Packet
+import org.coresense.itantra.core.protocol.PacketCodec
+import org.coresense.itantra.core.protocol.PacketPriority
+import org.coresense.itantra.core.protocol.PacketType
+import org.coresense.itantra.data.database.MessageEntity
+import org.coresense.itantra.backend.speech.LanguageModelRegistry
+import org.coresense.itantra.backend.speech.OfflineSttEngine
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before

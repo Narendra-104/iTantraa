@@ -1,6 +1,6 @@
 package org.coresense.itantra.profile
 
-import org.coresense.itantra.storage.UserProfileEntity
+import org.coresense.itantra.data.database.UserProfileEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,17 +85,17 @@ class UserProfileTest {
 
     @Test
     fun databaseMigrations_haveCorrectSourceAndTargetVersions() {
-        assertEquals(1, org.coresense.itantra.storage.AppDatabase.MIGRATION_1_2.startVersion)
-        assertEquals(2, org.coresense.itantra.storage.AppDatabase.MIGRATION_1_2.endVersion)
+        assertEquals(1, org.coresense.itantra.data.database.AppDatabase.MIGRATION_1_2.startVersion)
+        assertEquals(2, org.coresense.itantra.data.database.AppDatabase.MIGRATION_1_2.endVersion)
 
-        assertEquals(1, org.coresense.itantra.storage.AppDatabase.MIGRATION_1_3.startVersion)
-        assertEquals(3, org.coresense.itantra.storage.AppDatabase.MIGRATION_1_3.endVersion)
+        assertEquals(1, org.coresense.itantra.data.database.AppDatabase.MIGRATION_1_3.startVersion)
+        assertEquals(3, org.coresense.itantra.data.database.AppDatabase.MIGRATION_1_3.endVersion)
 
-        assertEquals(2, org.coresense.itantra.storage.AppDatabase.MIGRATION_2_3.startVersion)
-        assertEquals(3, org.coresense.itantra.storage.AppDatabase.MIGRATION_2_3.endVersion)
+        assertEquals(2, org.coresense.itantra.data.database.AppDatabase.MIGRATION_2_3.startVersion)
+        assertEquals(3, org.coresense.itantra.data.database.AppDatabase.MIGRATION_2_3.endVersion)
 
-        assertEquals(3, org.coresense.itantra.storage.AppDatabase.MIGRATION_3_4.startVersion)
-        assertEquals(4, org.coresense.itantra.storage.AppDatabase.MIGRATION_3_4.endVersion)
+        assertEquals(3, org.coresense.itantra.data.database.AppDatabase.MIGRATION_3_4.startVersion)
+        assertEquals(4, org.coresense.itantra.data.database.AppDatabase.MIGRATION_3_4.endVersion)
     }
 
     @Test
@@ -122,9 +122,9 @@ class UserProfileTest {
 
     @Test
     fun appLocalization_hindiAndMarathiContainAllLoginAndSignUpStrings() {
-        val hindiStrings = org.coresense.itantra.ui.i18n.AppLocalization.getStrings(org.coresense.itantra.protocol.Language.HINDI)
-        val marathiStrings = org.coresense.itantra.ui.i18n.AppLocalization.getStrings(org.coresense.itantra.protocol.Language.MARATHI)
-        val englishStrings = org.coresense.itantra.ui.i18n.AppLocalization.getStrings(org.coresense.itantra.protocol.Language.ENGLISH)
+        val hindiStrings = org.coresense.itantra.frontend.i18n.AppLocalization.getStrings(org.coresense.itantra.core.protocol.Language.HINDI)
+        val marathiStrings = org.coresense.itantra.frontend.i18n.AppLocalization.getStrings(org.coresense.itantra.core.protocol.Language.MARATHI)
+        val englishStrings = org.coresense.itantra.frontend.i18n.AppLocalization.getStrings(org.coresense.itantra.core.protocol.Language.ENGLISH)
 
         assertEquals("वापसी पर स्वागत है", hindiStrings.welcomeBack)
         assertEquals("पुन्हा स्वागत आहे", marathiStrings.welcomeBack)

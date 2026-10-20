@@ -1,12 +1,13 @@
 package org.coresense.itantra.location
 
-import org.coresense.itantra.emergency.Haversine
-import org.coresense.itantra.protocol.Language
-import org.coresense.itantra.protocol.Packet
-import org.coresense.itantra.protocol.PacketCodec
-import org.coresense.itantra.protocol.PacketPriority
-import org.coresense.itantra.protocol.PacketType
-import org.coresense.itantra.ui.TrackedPeer
+import org.coresense.itantra.backend.emergency.Haversine
+import org.coresense.itantra.core.protocol.Language
+import org.coresense.itantra.core.protocol.Packet
+import org.coresense.itantra.core.protocol.PacketCodec
+import org.coresense.itantra.core.protocol.PacketPriority
+import org.coresense.itantra.core.protocol.PacketType
+import org.coresense.itantra.frontend.viewmodel.TrackedPeer
+import org.coresense.itantra.frontend.viewmodel.TrackingStatus
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -290,7 +291,7 @@ class TrackMeTest {
         )
 
         // Must report STALE status when fix is > 25 seconds old
-        assertEquals(org.coresense.itantra.ui.TrackingStatus.STALE, stalePeer.getStatus(isConnected = true))
+        assertEquals(TrackingStatus.STALE, stalePeer.getStatus(isConnected = true))
         assertTrue("isStale property must be true", stalePeer.isStale)
     }
 
@@ -476,10 +477,10 @@ class TrackMeTest {
         )
 
         // When connected -> reports LIVE
-        assertEquals(org.coresense.itantra.ui.TrackingStatus.LIVE, freshPeer.getStatus(isConnected = true))
+        assertEquals(TrackingStatus.LIVE, freshPeer.getStatus(isConnected = true))
 
         // When transport link is DISCONNECTED -> must report DISCONNECTED, never LIVE
-        assertEquals(org.coresense.itantra.ui.TrackingStatus.DISCONNECTED, freshPeer.getStatus(isConnected = false))
+        assertEquals(TrackingStatus.DISCONNECTED, freshPeer.getStatus(isConnected = false))
     }
 
     @Test
@@ -488,19 +489,19 @@ class TrackMeTest {
 
         // 1. Fresh fix (<8s old, high accuracy) -> LIVE
         val livePeer = TrackedPeer("P1", 28.5, 77.2, 5.0f, now - 2000L, now - 2000L)
-        assertEquals(org.coresense.itantra.ui.TrackingStatus.LIVE, livePeer.getStatus(true))
+        assertEquals(TrackingStatus.LIVE, livePeer.getStatus(true))
 
         // 2. Weak signal (>50m accuracy) -> SIGNAL_WEAK
         val weakSignalPeer = TrackedPeer("P2", 28.5, 77.2, 85.0f, now - 3000L, now - 3000L)
-        assertEquals(org.coresense.itantra.ui.TrackingStatus.SIGNAL_WEAK, weakSignalPeer.getStatus(true))
+        assertEquals(TrackingStatus.SIGNAL_WEAK, weakSignalPeer.getStatus(true))
 
         // 3. Updating (15s old) -> UPDATING
         val updatingPeer = TrackedPeer("P3", 28.5, 77.2, 8.0f, now - 15_000L, now - 15_000L)
-        assertEquals(org.coresense.itantra.ui.TrackingStatus.UPDATING, updatingPeer.getStatus(true))
+        assertEquals(TrackingStatus.UPDATING, updatingPeer.getStatus(true))
 
         // 4. Stale (>25s old) -> STALE
         val stalePeer = TrackedPeer("P4", 28.5, 77.2, 8.0f, now - 30_000L, now - 30_000L)
-        assertEquals(org.coresense.itantra.ui.TrackingStatus.STALE, stalePeer.getStatus(true))
+        assertEquals(TrackingStatus.STALE, stalePeer.getStatus(true))
     }
 }
 

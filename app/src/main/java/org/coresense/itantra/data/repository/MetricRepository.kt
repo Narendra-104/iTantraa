@@ -1,8 +1,8 @@
 package org.coresense.itantra.data.repository
 
 import kotlinx.coroutines.flow.Flow
-import org.coresense.itantra.storage.MetricSampleDao
-import org.coresense.itantra.storage.MetricSampleEntity
+import org.coresense.itantra.data.database.MetricSampleDao
+import org.coresense.itantra.data.database.MetricSampleEntity
 
 class MetricRepository(private val metricDao: MetricSampleDao) {
     suspend fun getAllSamples(): List<MetricSampleEntity> {
