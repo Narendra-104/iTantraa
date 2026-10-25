@@ -1,4 +1,4 @@
-# iTantra (SIH26173, Team CoreSense)
+# iTantra ( CoreSense)
 ### Offline Speech-to-Text & Text-to-Speech Phone-to-Phone Mesh Radio
 
 iTantra is an open-source, fully offline Android mesh radio application designed for disaster response, emergency tactical squads, and zero-connectivity field operations.
